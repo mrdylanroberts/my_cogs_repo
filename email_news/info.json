@@ -1,0 +1,23 @@
+{
+    "name": "EmailNews",
+    "short": "Forward emails from specified senders to Discord channels",
+    "description": "A secure cog that allows forwarding emails from specific senders to designated Discord channels. Includes encrypted credential storage for email accounts.",
+    "end_user_data_statement": "This cog stores encrypted email credentials and sender filter configurations for authorized users.",
+    "author": ["mrdylanroberts"],
+    "required_cogs": {},
+    "requirements": [
+        "cryptography",
+        "aiosmtplib",
+        "aioimaplib",
+        "aiofiles"
+    ],
+    "tags": [
+        "email",
+        "notifications",
+        "news"
+    ],
+    "min_bot_version": "3.5.0",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

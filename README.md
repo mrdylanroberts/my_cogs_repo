@@ -12,6 +12,24 @@ This repository contains custom cogs for Red-DiscordBot.
   - Admin-only configuration commands
   - Settings display with Discord embeds
 
+### JoinLeaveThreads
+- **Description**: Sends customizable join and leave messages to specific Discord threads.
+- **Features**:
+  - Send messages when users join or leave the server
+  - Highly customizable messages with member and server placeholders
+  - Option to send messages to existing threads
+  - Option to create new threads for each event
+  - Configurable thread naming format
+
+### EmailNews
+- **Description**: Securely forwards emails from specific senders to designated Discord channels.
+- **Features**:
+  - 🔒 Secure credential storage using encryption
+  - 📧 Forward unread emails from specific senders
+  - ⚙️ Configurable email checking interval
+  - 🎯 Selective forwarding based on sender addresses
+  - 🔐 Secure setup process through DMs
+
 ## Installation
 
 1. Add this repository to your Red-DiscordBot instance:
@@ -19,14 +37,18 @@ This repository contains custom cogs for Red-DiscordBot.
    !repo add my-cogs-repo https://github.com/mrdylanroberts/my_cogs_repo
    ```
 
-2. Install the RoleCleanup cog:
+2. Install the desired cog(s):
    ```
-   !cog install my-cogs-repo role_cleanup
+   !cog install my-cogs-repo role_cleanup    # For role management
+   !cog install my-cogs-repo joinleave_threads    # For join/leave messages
+   !cog install my-cogs-repo email_news    # For email forwarding
    ```
 
-3. Load the cog:
+3. Load the installed cog(s):
    ```
    !load role_cleanup
+   !load joinleave_threads
+   !load email_news
    ```
 
 ## Quick Configuration Commands
