@@ -161,7 +161,7 @@ This step makes users react to a message in your welcome channel to get the `ROL
     ```
     !roletools reaction create [MESSAGE_ID] ✅ ROLE_SELECTOR normal
     ```
-    *   Example: `!roletools reaction create 1380241798689062933 ✅ ROLE_SELECTOR normal`
+    *   Example: `!roletools reaction create 1380241798689062933 ✅ ROLE_SELECTOR`
 
 **Step 5: Configure Channel Permissions (Recommended)**
 
