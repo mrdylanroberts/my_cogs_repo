@@ -1,0 +1,20 @@
+{
+    "author": [
+        "Your Name"
+    ],
+    "install_msg": "Thanks for installing joinleave_threads! Use `[p]help JoinLeaveThreads` for a list of commands.",
+    "name": "JoinLeaveThreads",
+    "short": "Sends join/leave messages to threads.",
+    "description": "A cog to send server join and leave messages to specified threads, either new or existing.",
+    "tags": [
+        "join",
+        "leave",
+        "welcome",
+        "goodbye",
+        "thread",
+        "utility"
+    ],
+    "requirements": [],
+    "min_bot_version": "3.5.0",
+    "end_user_data_statement": "This cog does not persistently store any end user data."
+}

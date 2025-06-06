@@ -76,6 +76,8 @@ After installation, use these commands to configure the cog (requires admin or m
 
 This guide provides a comprehensive step-by-step process to set up the `RoleCleanup` cog along with the necessary Discord roles and `roletools` integration for a complete user verification and role selection flow.
 
+**IMPORTANT PRE-REQUISITE:** Ensure you have created the necessary `GUEST` and `ROLE_SELECTOR` (or your chosen names) roles in your Discord Server Settings *before* proceeding with the cog configuration steps below. Refer to **Step 1** for details on creating these roles.
+
 **Assumptions:**
 *   You have Red-DiscordBot installed and running.
 *   You have admin/server manager permissions on your Discord server.
@@ -117,6 +119,8 @@ If you haven't already:
 **Step 3: Configure the `RoleCleanup` Cog**
 
 Use the following commands to tell `RoleCleanup` which roles and channels to use. Replace the example names/channels with your actual ones.
+
+**Note:** Ensure the roles you specify here (e.g., `GUEST`, `ROLE_SELECTOR`) have already been created in your Discord server as detailed in Step 1.
 
 1.  Set the Guest Role (the role new users have):
     ```
