@@ -3,7 +3,7 @@ from typing import Dict
 
 from redbot.core import commands
 from discord.ext import commands as dpy_commands
-from discord import Message, TextChannel
+from discord import Message, TextChannel, Embed
 from redbot.core.utils.chat_formatting import box, pagify
 from redbot.core import Config, checks
 
@@ -29,22 +29,11 @@ class HelpDetector(commands.Cog):
             ]
         }
         self.config.register_guild(**default_guild_settings)
-        self.help_keywords = [ # This will be loaded from config per guild now
-
-            'i need help',
-            'need help',
-            'can someone help',
-            'help me',
-            'help please',
-            'anyone help',
-            'how do i',
-            'how to'
-        ]
 
     @commands.Cog.listener()
     async def on_message(self, message: Message):
-        # Ignore bot messages and commands
-        if message.author.bot or message.content.startswith(await self.bot.get_prefix(message)):
+        # Ignore DMs and bot messages and commands
+        if not message.guild or message.author.bot or message.content.startswith(await self.bot.get_prefix(message)):
             return
 
         # Check if message contains help keywords
@@ -144,7 +133,7 @@ class HelpDetector(commands.Cog):
         
         keyword_str = "\n".join([f"- `{kw}`" for kw in keywords]) if keywords else "None"
 
-        embed = discord.Embed(title="HelpDetector Settings", color=await ctx.embed_color())
+        embed = Embed(title="HelpDetector Settings", color=await ctx.embed_color())
         embed.add_field(name="Help Channel", value=channel_mention, inline=False)
         embed.add_field(name="Keywords", value=keyword_str, inline=False)
         await ctx.send(embed=embed)
