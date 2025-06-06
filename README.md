@@ -159,7 +159,7 @@ This step makes users react to a message in your welcome channel to get the `ROL
 2.  **Add the Reaction Role using `roletools`:**
     *   Use the following `roletools` command. Replace `[MESSAGE_ID]` with the ID you copied, `✅` with your desired emoji, and `ROLE_SELECTOR` with the exact name of the selector role you created in Step 1 and configured in Step 3.
     ```
-    !roletools reaction create [MESSAGE_ID] ✅ ROLE_SELECTOR normal
+    !roletools reaction create [MESSAGE_ID] ✅ ROLE_SELECTOR
     ```
     *   Example: `!roletools reaction create 1380241798689062933 ✅ ROLE_SELECTOR`
 
