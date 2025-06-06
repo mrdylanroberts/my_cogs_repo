@@ -20,7 +20,21 @@ This cog automatically detects when users ask for help in chat and directs them 
 
 ## Usage
 
-Once installed and loaded, the cog will automatically monitor chat messages for help-related keywords such as:
+Once installed and loaded, the cog will automatically monitor chat messages for help-related keywords.
+
+### Setting up the Cog
+
+Before the cog can function, you need to set a help channel. Use the following command:
+
+```
+[p]helpdetectorset channel #your-help-channel
+```
+
+Replace `#your-help-channel` with the actual channel you want users to be directed to.
+
+### How it Works
+
+When a user sends a message containing one of the configured keywords, the bot will reply with a message directing them to the specified help channel. By default, it listens for keywords like:
 - "i need help"
 - "need help"
 - "can someone help"
@@ -30,8 +44,17 @@ Once installed and loaded, the cog will automatically monitor chat messages for 
 - "how do i"
 - "how to"
 
-When these keywords are detected, the bot will reply with a message directing the user to the help channel.
+You can customize these keywords.
 
-## Note
+### Commands
 
-Make sure your server has a channel named "❓・questions-help" or modify the code to match your help channel's name.
+The following commands are available to manage the HelpDetector cog (requires admin or manage_guild permissions):
+
+- `[p]helpdetectorset channel <channel>`: Sets the channel where users will be directed for help.
+  - Example: `[p]helpdetectorset channel #support`
+- `[p]helpdetectorset addkeyword <keyword>`: Adds a new keyword to the detection list.
+  - Example: `[p]helpdetectorset addkeyword assistance needed`
+- `[p]helpdetectorset removekeyword <keyword>`: Removes a keyword from the detection list.
+  - Example: `[p]helpdetectorset removekeyword help me`
+- `[p]helpdetectorset listkeywords`: Lists all currently configured keywords.
+- `[p]helpdetectorset viewsettings`: Shows the current help channel and all configured keywords.

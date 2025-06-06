@@ -3,7 +3,9 @@ from typing import Dict
 
 from redbot.core import commands
 from discord.ext import commands as dpy_commands
-from discord import Message
+from discord import Message, TextChannel
+from redbot.core.utils.chat_formatting import box, pagify
+from redbot.core import Config, checks
 
 class HelpDetector(commands.Cog):
     """Detects help-related messages and directs users to the help channel."""
@@ -12,7 +14,23 @@ class HelpDetector(commands.Cog):
         self.bot = bot
         self.cooldowns: Dict[int, datetime] = {}
         self.cooldown_duration = timedelta(hours=1)
-        self.help_keywords = [
+        self.config = Config.get_conf(self, identifier=1234567890, force_registration=True)
+        default_guild_settings = {
+            "help_channel_id": None,
+            "help_keywords": [
+                'i need help',
+                'need help',
+                'can someone help',
+                'help me',
+                'help please',
+                'anyone help',
+                'how do i',
+                'how to'
+            ]
+        }
+        self.config.register_guild(**default_guild_settings)
+        self.help_keywords = [ # This will be loaded from config per guild now
+
             'i need help',
             'need help',
             'can someone help',
@@ -30,8 +48,20 @@ class HelpDetector(commands.Cog):
             return
 
         # Check if message contains help keywords
+        guild_settings = await self.config.guild(message.guild).all()
+        help_channel_id = guild_settings.get("help_channel_id")
+        current_help_keywords = guild_settings.get("help_keywords", self.help_keywords) # Fallback to default if not set
+
+        if not help_channel_id:
+            return # Don't do anything if help channel is not set
+
+        help_channel = self.bot.get_channel(help_channel_id)
+        if not help_channel:
+            # Maybe log this? Channel might have been deleted
+            return
+
         msg_content = message.content.lower()
-        if any(keyword in msg_content for keyword in self.help_keywords):
+        if any(keyword in msg_content for keyword in current_help_keywords):
             # Check cooldown
             user_id = message.author.id
             now = datetime.now()
@@ -45,9 +75,76 @@ class HelpDetector(commands.Cog):
             # Send help channel reminder
             try:
                 await message.reply(
-                    "Hi! It looks like you need help. Please check out the ❓・questions-help channel "
-                    "where our community can better assist you!",
+                    f"Hi! It looks like you need help. Please check out {help_channel.mention} "
+                    f"where our community can better assist you!",
                     mention_author=False
                 )
-            except Exception:
-                pass  # Silently handle any errors sending the message
+            except Exception as e:
+                print(f"Error sending help message: {e}") # Log error for debugging
+
+    @commands.group()
+    @checks.admin_or_permissions(manage_guild=True)
+    async def helpdetectorset(self, ctx):
+        """Manage HelpDetector settings."""
+        pass
+
+    @helpdetectorset.command(name="channel")
+    async def set_help_channel(self, ctx, channel: TextChannel):
+        """Set the channel where users should be directed for help."""
+        await self.config.guild(ctx.guild).help_channel_id.set(channel.id)
+        await ctx.send(f"Help channel has been set to {channel.mention}")
+
+    @helpdetectorset.command(name="addkeyword")
+    async def add_keyword(self, ctx, *, keyword: str):
+        """Add a keyword to the list of help-related keywords."""
+        keyword = keyword.lower()
+        async with self.config.guild(ctx.guild).help_keywords() as keywords:
+            if keyword not in keywords:
+                keywords.append(keyword)
+                await ctx.send(f"Keyword `{keyword}` added.")
+            else:
+                await ctx.send(f"Keyword `{keyword}` already exists.")
+
+    @helpdetectorset.command(name="removekeyword")
+    async def remove_keyword(self, ctx, *, keyword: str):
+        """Remove a keyword from the list of help-related keywords."""
+        keyword = keyword.lower()
+        async with self.config.guild(ctx.guild).help_keywords() as keywords:
+            if keyword in keywords:
+                keywords.remove(keyword)
+                await ctx.send(f"Keyword `{keyword}` removed.")
+            else:
+                await ctx.send(f"Keyword `{keyword}` not found.")
+
+    @helpdetectorset.command(name="listkeywords")
+    async def list_keywords(self, ctx):
+        """List the current help-related keywords."""
+        keywords = await self.config.guild(ctx.guild).help_keywords()
+        if not keywords:
+            await ctx.send("No keywords are currently set.")
+            return
+        keyword_list = "\n".join([f"- `{kw}`" for kw in keywords])
+        for page in pagify(f"Current help keywords:\n{keyword_list}"):
+            await ctx.send(box(page))
+
+    @helpdetectorset.command(name="viewsettings")
+    async def view_settings(self, ctx):
+        """View the current HelpDetector settings."""
+        settings = await self.config.guild(ctx.guild).all()
+        help_channel_id = settings.get("help_channel_id")
+        keywords = settings.get("help_keywords", [])
+
+        channel_mention = "Not set"
+        if help_channel_id:
+            channel = self.bot.get_channel(help_channel_id)
+            if channel:
+                channel_mention = channel.mention
+            else:
+                channel_mention = f"Channel ID: {help_channel_id} (not found/accessible)"
+        
+        keyword_str = "\n".join([f"- `{kw}`" for kw in keywords]) if keywords else "None"
+
+        embed = discord.Embed(title="HelpDetector Settings", color=await ctx.embed_color())
+        embed.add_field(name="Help Channel", value=channel_mention, inline=False)
+        embed.add_field(name="Keywords", value=keyword_str, inline=False)
+        await ctx.send(embed=embed)
