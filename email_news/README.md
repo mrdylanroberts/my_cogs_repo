@@ -67,7 +67,9 @@ Replace `<your-secret-key>` with a strong, random string. Keep this key secure a
 !emailnews interval <seconds>
 ```
 - Sets how often to check for new emails
-- Minimum interval: 60 seconds
+- Minimum interval: 3600 seconds (1 hour)
+- Default interval: 21600 seconds (6 hours)
+- Rate limited to prevent excessive email server requests
 
 ## Security Considerations
 

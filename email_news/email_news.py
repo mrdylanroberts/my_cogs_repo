@@ -34,7 +34,8 @@ class EmailNews(commands.Cog):
         default_guild = {
             "email_accounts": {},  # Encrypted credentials
             "sender_filters": {},  # Sender email -> channel_id mapping
-            "check_interval": 300,  # 5 minutes
+            "check_interval": 21600,  # 6 hours
+            "last_check": None,  # Timestamp of last email check
         }
         
         self.config.register_guild(**default_guild)
@@ -153,15 +154,29 @@ class EmailNews(commands.Cog):
 
     @emailnews.command(name="interval")
     async def set_interval(self, ctx: commands.Context, seconds: int):
-        """Set how often to check for new emails (in seconds, minimum 60)."""
-        if seconds < 60:
-            await ctx.send("❌ Interval must be at least 60 seconds.")
+        """Set how often to check for new emails (in seconds, minimum 3600)."""
+        if seconds < 3600:
+            await ctx.send("❌ Interval must be at least 1 hour (3600 seconds) to prevent rate limiting.")
             return
 
         await self.config.guild(ctx.guild).check_interval.set(seconds)
-        await ctx.send(f"✅ Email check interval set to {seconds} seconds.")
+        human_readable = f"{seconds//3600} hours" if seconds >= 3600 else f"{seconds//60} minutes"
+        await ctx.send(f"✅ Email check interval set to {human_readable}.")
 
     async def check_emails(self, guild):
+        # Check if enough time has passed since last check
+        last_check = await self.config.guild(guild).last_check()
+        check_interval = await self.config.guild(guild).check_interval()
+        
+        if last_check is not None:
+            now = datetime.now(timezone.utc).timestamp()
+            time_since_last_check = now - last_check
+            
+            if time_since_last_check < check_interval:
+                return  # Skip check if interval hasn't elapsed
+        
+        # Update last check timestamp
+        await self.config.guild(guild).last_check.set(datetime.now(timezone.utc).timestamp())
         """Check for new emails and forward them to appropriate channels."""
         await self.initialize_encryption(guild.id)
         
@@ -243,7 +258,8 @@ class EmailNews(commands.Cog):
                         continue
                 
                 # Use a default interval if no guilds are configured
-                await asyncio.sleep(interval if 'interval' in locals() else 300)
+                # Always wait the (last guild's) interval or 300s before next check cycle
+                await asyncio.sleep(interval if 'interval' in locals() else 300) # Guild interval is 6 hours by default
             except Exception as e:
                 print(f"Error in email checking loop: {str(e)}")
                 await asyncio.sleep(60)  # Wait a minute before retrying on error
