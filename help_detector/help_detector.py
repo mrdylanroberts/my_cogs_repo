@@ -39,7 +39,21 @@ class HelpDetector(commands.Cog):
         # Check if message contains help keywords
         guild_settings = await self.config.guild(message.guild).all()
         help_channel_id = guild_settings.get("help_channel_id")
-        current_help_keywords = guild_settings.get("help_keywords", self.help_keywords) # Fallback to default if not set
+        current_help_keywords = guild_settings.get("help_keywords", [
+            'i need help',
+            'need help',
+            'can someone help',
+            'help me',
+            'help please',
+            'anyone help',
+            'how do i',
+            'how to'
+        ]) # Use default keywords if none set
+
+        # Debug logging
+        print(f"Processing message: {message.content}")
+        print(f"Help channel ID: {help_channel_id}")
+        print(f"Current keywords: {current_help_keywords}")
 
         if not help_channel_id:
             return # Don't do anything if help channel is not set
