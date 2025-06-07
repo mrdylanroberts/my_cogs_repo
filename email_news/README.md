@@ -14,24 +14,24 @@ A secure cog that allows forwarding emails from specific senders to designated D
 
 1. Add the repository to your bot:
 ```
-!repo add my-cogs-repo <repository-url>
+[p]repo add my-cogs-repo <repository-url>
 ```
 
 2. Install the cog:
 ```
-!cog install my-cogs-repo email_news
+[p]cog install my-cogs-repo email_news
 ```
 
 3. Load the cog:
 ```
-!load email_news
+[p]load email_news
 ```
 
 ## Initial Setup
 
 Before using the cog, you need to set up a secure encryption key. Use the following command to set it:
 ```
-!set api email_news secret,<your-secret-key>
+[p]set api email_news secret,<your-secret-key>
 ```
 Replace `<your-secret-key>` with a strong, random string. Keep this key secure as it's used to encrypt email credentials.
 
@@ -39,7 +39,7 @@ Replace `<your-secret-key>` with a strong, random string. Keep this key secure a
 
 ### Email Account Setup
 ```
-!emailnews setup <email> <password>
+[p]emailnews setup <email> <password>
 ```
 - Sets up an email account for monitoring
 - Use this command in a server channel (credentials will be deleted and response sent via DM)
@@ -47,24 +47,24 @@ Replace `<your-secret-key>` with a strong, random string. Keep this key secure a
 
 ### Sender Management
 ```
-!emailnews addsender <sender_email> [channel]
+[p]emailnews addsender <sender_email> [channel]
 ```
 - Adds a sender email to forward messages from
 - Optionally specify a channel (defaults to current channel)
 
 ```
-!emailnews removesender <sender_email>
+[p]emailnews removesender <sender_email>
 ```
 - Removes a sender email from the forwarding list
 
 ```
-!emailnews listsenders
+[p]emailnews listsenders
 ```
 - Lists all configured sender filters and their target channels
 
 ### Configuration
 ```
-!emailnews interval <seconds>
+[p]emailnews interval <seconds>
 ```
 - Sets how often to check for new emails
 - Minimum interval: 3600 seconds (1 hour)
