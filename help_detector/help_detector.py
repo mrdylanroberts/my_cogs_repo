@@ -60,7 +60,7 @@ class HelpDetector(commands.Cog):
 
         help_channel = self.bot.get_channel(help_channel_id)
         if not help_channel:
-            # Maybe log this? Channel might have been deleted
+            print(f"Error: Could not find help channel with ID: {help_channel_id}. It might have been deleted or the bot lacks access.")
             return
 
         msg_content = message.content.lower()
