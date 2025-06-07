@@ -274,6 +274,8 @@ class EmailNews(commands.Cog):
                                 await imap_client.store(num, "+FLAGS", "(\\Seen)")
                                 print(f"[EmailNews] Marked email {num} as Seen.")
                                 processed_email_count += 1
+                                print(f"[EmailNews] Pausing for 5 seconds before processing next email...")
+                                await asyncio.sleep(5)  # Pause for 5 seconds
                     except Exception as e:
                         print(f"[EmailNews] Error processing email {num}: {str(e)}")
                         continue
