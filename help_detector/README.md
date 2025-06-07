@@ -57,4 +57,10 @@ The following commands are available to manage the HelpDetector cog (requires ad
 - `[p]helpdetectorset removekeyword <keyword>`: Removes a keyword from the detection list.
   - Example: `[p]helpdetectorset removekeyword help me`
 - `[p]helpdetectorset listkeywords`: Lists all currently configured keywords.
-- `[p]helpdetectorset viewsettings`: Shows the current help channel and all configured keywords.
+- `[p]helpdetectorset setreactionmode <mode>`: Sets the emoji reaction mode. 
+  - Modes:
+    - `cooldown`: Reactions are added, but subject to the user cooldown (default).
+    - `always`: Reactions are always added if a keyword is detected (DM cooldown still applies).
+    - `off`: No emoji reactions will be added.
+  - Example: `[p]helpdetectorset setreactionmode always`
+- `[p]helpdetectorset viewsettings`: Shows the current help channel, configured keywords, and reaction mode.
