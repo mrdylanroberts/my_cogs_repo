@@ -32,8 +32,8 @@ The main command group is `[p]joinleavethreadsset` (aliased as `[p]jltset`).
 *   `[p]jltset join <true|false>`
     *   Enable or disable join messages.
 *   `[p]jltset joinmessage <message>`
-    *   Set the join message. Placeholders: `{member.mention}`, `{member.name}`, `{member.id}`, `{server.name}`.
-    *   Example: `[p]jltset joinmessage Welcome {member.mention} to {server.name}!`
+    *   Set the join message. Placeholders: `{member.mention}`, `{member.name}`, `{member.display_name}`, `{member.id}`, `{server.name}`.
+    *   Example: `[p]jltset joinmessage Welcome {member.mention} (aka {member.display_name}) to {server.name} which now has {server.member_count} members!`
 *   `[p]jltset jointhread [thread_or_channel_id]`
     *   Set the target thread ID for join messages. If `joinnewthread` is true, this should be the parent channel ID.
     *   Provide no ID to clear.
@@ -48,8 +48,8 @@ The main command group is `[p]joinleavethreadsset` (aliased as `[p]jltset`).
 *   `[p]jltset leave <true|false>`
     *   Enable or disable leave messages.
 *   `[p]jltset leavemessage <message>`
-    *   Set the leave message. Placeholders: `{member.name}`, `{member.id}`, `{server.name}`.
-    *   Example: `[p]jltset leavemessage Goodbye {member.name}.`
+    *   Set the leave message. Placeholders: `{member.name}`, `{member.display_name}`, `{member.id}`, `{server.name}`.
+    *   Example: `[p]jltset leavemessage Goodbye {member.name} (aka {member.display_name}). {server.name} now has {server.member_count} members.`
 *   `[p]jltset leavethread [thread_or_channel_id]`
     *   Set the target thread ID for leave messages. If `leavenewthread` is true, this should be the parent channel ID.
     *   Provide no ID to clear.
@@ -64,12 +64,12 @@ The main command group is `[p]joinleavethreadsset` (aliased as `[p]jltset`).
 *   `{member}`: The member object.
     *   `{member.name}`: The member's username (e.g., `Red`).
     *   `{member.mention}`: Mentions the member (e.g., `@Red`).
-    *   `{member.display_name}`: The member's display name (nickname if set, otherwise username).
+    *   `{member.display_name}`: The member's display name (nickname if set, otherwise username, e.g., `Reddington`).
     *   `{member.id}`: The member's ID (e.g., `123456789012345678`).
 *   `{server}`: The server (guild) object.
     *   `{server.name}`: The server's name (e.g., `My Awesome Server`).
-    *   `{server.id}`: The server's ID.
-    *   `{server.member_count}`: The server's member count.
+    *   `{server.id}`: The server's ID (e.g., `987654321098765432`).
+    *   `{server.member_count}`: The server's current member count (e.g., `150`).
 
 ## Permissions
 
