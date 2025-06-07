@@ -18,6 +18,8 @@ from redbot.core import commands, Config
 from redbot.core.bot import Red
 from redbot.core.utils.chat_formatting import box
 
+import logging
+
 log = logging.getLogger("red.my-cogs-repo.email_news") # Instantiate the logger
 
 # Default list of sender emails
