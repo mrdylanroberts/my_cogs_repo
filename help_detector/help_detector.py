@@ -191,15 +191,14 @@ class HelpDetector(commands.Cog):
         for page in pagify(f"Current help keywords:\n{keyword_list}"):
             await ctx.send(box(page))
 
-    @helpdetectorset.command(name="viewsettings")
     @helpdetectorset.command(name="setreactionmode")
     async def set_reaction_mode(self, ctx, mode: str):
         """Set the emoji reaction mode.
 
         Modes:
         - `cooldown`: Reactions are added, but subject to the user cooldown (default).
-        - `always`: Reactions are always added if a keyword is detected (DM cooldown still applies).
-        - `off`: No emoji reactions will be added.
+        - `always`: Reactions are always added, regardless of cooldown (DM still has cooldown).
+        - `off`: No reactions are added.
         """
         mode = mode.lower()
         if mode not in ["cooldown", "always", "off"]:
@@ -210,24 +209,18 @@ class HelpDetector(commands.Cog):
 
     @helpdetectorset.command(name="viewsettings")
     async def view_settings(self, ctx):
-        """View the current HelpDetector settings."""
+        """View the current settings for HelpDetector."""
         settings = await self.config.guild(ctx.guild).all()
         help_channel_id = settings.get("help_channel_id")
         keywords = settings.get("help_keywords", [])
         reaction_mode = settings.get("reaction_mode", "cooldown")
 
-        channel_mention = "Not set"
-        if help_channel_id:
-            channel = self.bot.get_channel(help_channel_id)
-            if channel:
-                channel_mention = channel.mention
-            else:
-                channel_mention = f"Channel ID: {help_channel_id} (not found/accessible)"
-        
-        keyword_str = "\n".join([f"- `{kw}`" for kw in keywords]) if keywords else "None"
+        help_channel = self.bot.get_channel(help_channel_id) if help_channel_id else "Not set"
+        keyword_list = "\n".join([f"- `{kw}`" for kw in keywords]) if keywords else "No keywords set."
 
         embed = Embed(title="HelpDetector Settings", color=await ctx.embed_color())
-        embed.add_field(name="Help Channel", value=channel_mention, inline=False)
-        embed.add_field(name="Keywords", value=keyword_str, inline=False)
+        embed.add_field(name="Help Channel", value=help_channel.mention if isinstance(help_channel, TextChannel) else help_channel, inline=False)
         embed.add_field(name="Reaction Mode", value=f"`{reaction_mode}`", inline=False)
+        embed.add_field(name="Keywords", value=box(keyword_list) if keywords else "No keywords set.", inline=False)
+        
         await ctx.send(embed=embed)
