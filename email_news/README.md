@@ -71,6 +71,11 @@ Replace `<your-secret-key>` with a strong, random string. Keep this key secure a
 - Default interval: 21600 seconds (6 hours)
 - Rate limited to prevent excessive email server requests
 
+```
+[p]emailnews checknow
+```
+- Manually triggers an email check and forwards new emails
+
 ## Security Considerations
 
 1. Email credentials are encrypted using Fernet symmetric encryption
