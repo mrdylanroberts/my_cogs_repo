@@ -296,30 +296,51 @@ class EmailNews(commands.Cog):
                         print(f"[EmailNews] Processing email number: {num}")
                         # Fetch the full email message
                         _, msg_data = await imap_client.fetch(num, "(RFC822)")
-                        print(f"[EmailNews] DEBUG: Raw msg_data[0][0] for {num}: {msg_data[0][0]}")
-                        email_body = msg_data[0][1]
-                        print(f"[EmailNews] Fetched email body for {num}.")
-                        print(f"[EmailNews] DEBUG: Type of initial email_body: {type(email_body)}")
-                        if isinstance(email_body, bytes):
-                            print(f"[EmailNews] DEBUG: Initial email_body (first 200 bytes as string if possible): {email_body[:200].decode('utf-8', 'replace')}")
+                        # More detailed logging for msg_data structure
+                        log.debug(f"Full msg_data for {num}: {msg_data}")
+                        log.debug(f"Type of msg_data: {type(msg_data)}")
+                        if msg_data and isinstance(msg_data, list) and len(msg_data) > 0:
+                            log.debug(f"Type of msg_data[0]: {type(msg_data[0])}")
+                            if isinstance(msg_data[0], tuple) and len(msg_data[0]) == 2:
+                                log.debug(f"msg_data[0][0] (metadata): {msg_data[0][0]}")
+                                log.debug(f"Type of msg_data[0][1] (body): {type(msg_data[0][1])}")
+                                email_body = msg_data[0][1]
+                            else:
+                                log.error(f"Unexpected structure for msg_data[0] for email {num}: {msg_data[0]}")
+                                continue # Skip this email
                         else:
-                            print(f"[EmailNews] DEBUG: Initial email_body (first 200 chars): {str(email_body)[:200]}")
-                        
-                        # Parse email headers
-                        # Ensure email_body is bytes for message_from_bytes
-                        if isinstance(email_body, str):
-                            print(f"[EmailNews] DEBUG: email_body is string, encoding to bytes.")
-                            email_body_bytes = email_body.encode('utf-8', errors='replace') # Encode to bytes, replace errors
-                        elif isinstance(email_body, bytes):
-                            print(f"[EmailNews] DEBUG: email_body is already bytes.")
-                            email_body_bytes = email_body # Assume it's already bytes
-                        else:
-                            print(f"[EmailNews] DEBUG: email_body is neither str nor bytes, attempting to convert to string then bytes. Type: {type(email_body)}")
-                            email_body_bytes = str(email_body).encode('utf-8', errors='replace')
+                            log.error(f"Unexpected or empty msg_data for email {num}: {msg_data}")
+                            continue # Skip this email
 
-                        print(f"[EmailNews] DEBUG: Type of email_body_bytes before parsing: {type(email_body_bytes)}")
-                        print(f"[EmailNews] DEBUG: email_body_bytes (first 200 bytes as string if possible): {email_body_bytes[:200].decode('utf-8', 'replace')}")
-                        email_message = email.message_from_bytes(email_body_bytes)
+                        print(f"[EmailNews] Fetched email body for {num}.")
+                        log.debug(f"Type of initial email_body: {type(email_body)}")
+                        log.debug(f"Initial email_body (first 200 chars): {str(email_body)[:200]}")
+
+                        email_body_bytes = None
+                        if isinstance(email_body, str):
+                            email_body_bytes = email_body.encode('utf-8', errors='replace')
+                        elif isinstance(email_body, bytes):
+                            email_body_bytes = email_body
+                        else:
+                            log.debug(f"email_body is neither str nor bytes, attempting to convert to string then bytes. Type: {type(email_body)}")
+                            try:
+                                email_body_bytes = str(email_body).encode('utf-8', errors='replace')
+                            except Exception as e_conv:
+                                log.error(f"Could not convert email_body of type {type(email_body)} to bytes: {e_conv}")
+                                continue
+                        
+                        log.debug(f"Type of email_body_bytes before parsing: {type(email_body_bytes)}")
+                        log.debug(f"email_body_bytes (first 200 bytes as string if possible): {email_body_bytes[:200].decode('utf-8', 'ignore') if email_body_bytes else 'None'}")
+
+                        if email_body_bytes:
+                            # Ensure we are calling the email module's function, not a string variable
+                            # This was the original error point: 'str' object has no attribute 'message_from_bytes'
+                            # This implies 'email' was somehow a string. Let's be explicit.
+                            import email as email_parser_module 
+                            msg = email_parser_module.message_from_bytes(email_body_bytes)
+                        else:
+                            log.warning(f"Skipping email {num} due to empty or unconvertible body.")
+                            continue
                         from_address_raw = email.utils.parseaddr(email_message["From"])[1]
                         from_address = from_address_raw.lower() # Convert to lowercase for case-insensitive comparison
                         subject = email_message["Subject"]
