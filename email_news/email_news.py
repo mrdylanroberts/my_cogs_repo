@@ -161,8 +161,11 @@ class EmailNews(commands.Cog):
 
         await ctx.send("⏳ Manually triggering email check...")
         try:
-            await self.check_emails(ctx.guild)
-            await ctx.send("✅ Email check manually triggered. New emails (if any) should be processed shortly.")
+            processed_count = await self.check_emails(ctx.guild, manual_trigger=True)
+            if processed_count > 0:
+                await ctx.send(f"✅ Email check manually triggered. Processed {processed_count} new email(s).")
+            else:
+                await ctx.send("✅ Email check manually triggered. No new emails found or processed.")
         except Exception as e:
             await ctx.send(f"❌ An error occurred during manual email check: {str(e)}")
 
@@ -177,56 +180,74 @@ class EmailNews(commands.Cog):
         human_readable = f"{seconds//3600} hours" if seconds >= 3600 else f"{seconds//60} minutes"
         await ctx.send(f"✅ Email check interval set to {human_readable}.")
 
-    async def check_emails(self, guild):
-        # Check if enough time has passed since last check
-        last_check = await self.config.guild(guild).last_check()
-        check_interval = await self.config.guild(guild).check_interval()
-        
-        if last_check is not None:
-            now = datetime.now(timezone.utc).timestamp()
-            time_since_last_check = now - last_check
+    async def check_emails(self, guild, manual_trigger=False):
+        print(f"[EmailNews] Starting email check for guild: {guild.name} ({guild.id})")
+        # Check if enough time has passed since last check, unless manually triggered
+        if not manual_trigger:
+            last_check = await self.config.guild(guild).last_check()
+            check_interval = await self.config.guild(guild).check_interval()
+            print(f"[EmailNews] Last check: {last_check}, Interval: {check_interval}")
             
-            if time_since_last_check < check_interval:
-                return  # Skip check if interval hasn't elapsed
-        
-        # Update last check timestamp
-        await self.config.guild(guild).last_check.set(datetime.now(timezone.utc).timestamp())
+            if last_check is not None:
+                now = datetime.now(timezone.utc).timestamp()
+                time_since_last_check = now - last_check
+                print(f"[EmailNews] Time since last check: {time_since_last_check} seconds")
+                
+                if time_since_last_check < check_interval:
+                    print("[EmailNews] Interval not elapsed. Skipping check.")
+                    return 0 # Skip check if interval hasn't elapsed
+            
+            # Update last check timestamp only for automated checks
+            await self.config.guild(guild).last_check.set(datetime.now(timezone.utc).timestamp())
+            print("[EmailNews] Updated last_check timestamp.")
         """Check for new emails and forward them to appropriate channels."""
         await self.initialize_encryption(guild.id)
         
         accounts = await self.config.guild(guild).email_accounts()
         filters = await self.config.guild(guild).sender_filters()
+        print(f"[EmailNews] Found {len(accounts)} email account(s) and {len(filters)} sender filter(s).")
+        processed_email_count = 0
 
         for email, encrypted_data in accounts.items():
             try:
                 creds = self.decrypt_credentials(encrypted_data)
                 imap_client = aioimaplib.IMAP4_SSL("imap.gmail.com")
                 await imap_client.wait_hello_from_server()
+                print(f"[EmailNews] Logging into: {creds['email']}")
                 await imap_client.login(creds["email"], creds["password"])
+                print(f"[EmailNews] Logged in successfully. Selecting INBOX.")
                 await imap_client.select("INBOX")
+                print("[EmailNews] INBOX selected.")
 
                 # Search for unread emails
+                print("[EmailNews] Searching for unseen emails...")
                 _, messages = await imap_client.search("(UNSEEN)")
                 message_numbers = messages[0].split()
+                print(f"[EmailNews] Found {len(message_numbers)} unseen email(s).")
 
                 for num in message_numbers:
                     try:
+                        print(f"[EmailNews] Processing email number: {num}")
                         # Fetch the full email message
                         _, msg_data = await imap_client.fetch(num, "(RFC822)")
                         email_body = msg_data[0][1]
+                        print(f"[EmailNews] Fetched email body for {num}.")
                         
                         # Parse email headers
                         email_message = email.message_from_bytes(email_body)
                         from_address = email.utils.parseaddr(email_message["From"])[1]
                         subject = email_message["Subject"]
                         date = email_message["Date"]
+                        print(f"[EmailNews] Email From: {from_address}, Subject: {subject}")
                         
                         # Check if this sender is in our filters
                         if from_address in filters:
+                            print(f"[EmailNews] Sender {from_address} is in filters.")
                             channel_id = filters[from_address]
                             channel = guild.get_channel(channel_id)
                             
                             if channel:
+                                print(f"[EmailNews] Target channel found: {channel.name} ({channel.id})")
                                 # Extract email content
                                 content = ""
                                 if email_message.is_multipart():
@@ -251,13 +272,18 @@ class EmailNews(commands.Cog):
                                 
                                 # Mark email as read
                                 await imap_client.store(num, "+FLAGS", "(\\Seen)")
+                                print(f"[EmailNews] Marked email {num} as Seen.")
+                                processed_email_count += 1
                     except Exception as e:
-                        print(f"Error processing email {num}: {str(e)}")
+                        print(f"[EmailNews] Error processing email {num}: {str(e)}")
                         continue
 
                 await imap_client.logout()
+                print(f"[EmailNews] Logged out from {creds['email']}.")
             except Exception as e:
-                print(f"Error checking emails: {str(e)}")
+                print(f"[EmailNews] Error checking emails for account {email}: {str(e)}")
+        print(f"[EmailNews] Email check finished for guild {guild.name}. Processed {processed_email_count} email(s).")
+        return processed_email_count
 
     async def start_email_checking(self):
         """Start the email checking loop."""
