@@ -214,7 +214,19 @@ class EmailNews(commands.Cog):
                 imap_client = aioimaplib.IMAP4_SSL("imap.gmail.com")
                 await imap_client.wait_hello_from_server()
                 print(f"[EmailNews] Logging into: {creds['email']}")
-                await imap_client.login(creds["email"], creds["password"])
+                login_status, login_data = await imap_client.login(creds["email"], creds["password"])
+                print(f"[EmailNews] Login attempt status: {login_status}, data: {login_data}")
+
+                if login_status != 'OK':
+                    print(f"[EmailNews] Login failed for {creds['email']}. Status: {login_status}, Reason: {login_data}")
+                    # Attempt to logout even if login failed, to clean up connection if possible
+                    try:
+                        await imap_client.logout()
+                        print(f"[EmailNews] Logged out (after failed login attempt) from {creds['email']}.")
+                    except Exception as logout_err:
+                        print(f"[EmailNews] Error during logout after failed login for {creds['email']}: {logout_err}")
+                    continue # Skip to the next account
+
                 print(f"[EmailNews] Logged in successfully. Selecting INBOX.")
                 await imap_client.select("INBOX")
                 print("[EmailNews] INBOX selected.")
