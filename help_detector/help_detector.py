@@ -26,7 +26,8 @@ class HelpDetector(commands.Cog):
                 'anyone help',
                 'how do i',
                 'how to'
-            ]
+            ],
+            "reaction_mode": "cooldown"  # 'cooldown', 'always', 'off'
         }
         self.config.register_guild(**default_guild_settings)
 
@@ -89,17 +90,22 @@ class HelpDetector(commands.Cog):
                 break
 
         if keyword_found:
-            # Check cooldown
+            guild_settings = await self.config.guild(message.guild).all() # Re-fetch for reaction_mode
+            reaction_mode = guild_settings.get("reaction_mode", "cooldown")
+
             user_id = message.author.id
             now = datetime.now()
+
+            # Send help channel reminder (DM)
+            # Cooldown for DMs will still apply to prevent spam, regardless of reaction_mode for reactions themselves
             if user_id in self.cooldowns:
                 if now - self.cooldowns[user_id] < self.cooldown_duration:
-                    return
+                    # If DM is on cooldown, reactions might also be skipped depending on mode or if they are tied to DM success
+                    # For now, let's assume if DM is on cooldown, we also skip reactions to avoid partial responses.
+                    print(f"DM for user {user_id} on cooldown. Skipping DM and reactions.")
+                    return 
+            self.cooldowns[user_id] = now # Update DM cooldown
 
-            # Update cooldown
-            self.cooldowns[user_id] = now
-
-            # Send help channel reminder and add reactions
             try:
                 await message.author.send(
                     f"Hi! It looks like you need help. Please check out {help_channel.mention} in the '{message.guild.name}' server, "
@@ -109,25 +115,33 @@ class HelpDetector(commands.Cog):
             except Exception as e:
                 print(f"Error sending help DM: {e}") # Log error for debugging
 
-            try:
-                # Emoji IDs provided by user
-                emoji_icanhelp = self.bot.get_emoji(1375343348562264165)
-                emoji_pmstaff = self.bot.get_emoji(1375343355411562536)
+            # Handle reactions based on reaction_mode
+            if reaction_mode == "off":
+                print(f"Reaction mode is 'off'. Skipping reactions for message ID: {message.id}")
+            else: # 'always' or 'cooldown'
+                # The main DM cooldown check above already happened.
+                # If reaction_mode is 'always', we proceed to add reactions.
+                # If reaction_mode is 'cooldown', the DM cooldown effectively acts as the reaction cooldown too.
+                # This simplifies logic: if DM was sent, reactions (if not 'off') are attempted.
+                try:
+                    # Emoji IDs provided by user
+                    emoji_icanhelp = self.bot.get_emoji(1375343348562264165)
+                    emoji_pmstaff = self.bot.get_emoji(1375343355411562536)
 
-                if emoji_icanhelp:
-                    await message.add_reaction(emoji_icanhelp)
-                    print(f"Added icanhelp reaction to message ID: {message.id}") # Debug log for reaction
-                else:
-                    print(f"Could not find emoji 0_icanhelp (ID: 1375343348562264165)")
-                
-                if emoji_pmstaff:
-                    await message.add_reaction(emoji_pmstaff)
-                    print(f"Added pmstaff reaction to message ID: {message.id}") # Debug log for reaction
-                else:
-                    print(f"Could not find emoji 0_pmstaff (ID: 1375343355411562536)")
+                    if emoji_icanhelp:
+                        await message.add_reaction(emoji_icanhelp)
+                        print(f"Added icanhelp reaction to message ID: {message.id}")
+                    else:
+                        print(f"Could not find emoji 0_icanhelp (ID: 1375343348562264165)")
+                    
+                    if emoji_pmstaff:
+                        await message.add_reaction(emoji_pmstaff)
+                        print(f"Added pmstaff reaction to message ID: {message.id}")
+                    else:
+                        print(f"Could not find emoji 0_pmstaff (ID: 1375343355411562536)")
 
-            except Exception as e:
-                print(f"Error adding reactions: {e}") # Log error for reactions
+                except Exception as e:
+                    print(f"Error adding reactions: {e}")
         else:
             print(f"Keyword match FAILED. No configured keywords found in message: '{msg_content}' with keywords {current_help_keywords}") # Debug log
             return
@@ -178,11 +192,29 @@ class HelpDetector(commands.Cog):
             await ctx.send(box(page))
 
     @helpdetectorset.command(name="viewsettings")
+    @helpdetectorset.command(name="setreactionmode")
+    async def set_reaction_mode(self, ctx, mode: str):
+        """Set the emoji reaction mode.
+
+        Modes:
+        - `cooldown`: Reactions are added, but subject to the user cooldown (default).
+        - `always`: Reactions are always added if a keyword is detected (DM cooldown still applies).
+        - `off`: No emoji reactions will be added.
+        """
+        mode = mode.lower()
+        if mode not in ["cooldown", "always", "off"]:
+            await ctx.send("Invalid mode. Choose from `cooldown`, `always`, or `off`.")
+            return
+        await self.config.guild(ctx.guild).reaction_mode.set(mode)
+        await ctx.send(f"Reaction mode set to `{mode}`.")
+
+    @helpdetectorset.command(name="viewsettings")
     async def view_settings(self, ctx):
         """View the current HelpDetector settings."""
         settings = await self.config.guild(ctx.guild).all()
         help_channel_id = settings.get("help_channel_id")
         keywords = settings.get("help_keywords", [])
+        reaction_mode = settings.get("reaction_mode", "cooldown")
 
         channel_mention = "Not set"
         if help_channel_id:
@@ -197,4 +229,5 @@ class HelpDetector(commands.Cog):
         embed = Embed(title="HelpDetector Settings", color=await ctx.embed_color())
         embed.add_field(name="Help Channel", value=channel_mention, inline=False)
         embed.add_field(name="Keywords", value=keyword_str, inline=False)
+        embed.add_field(name="Reaction Mode", value=f"`{reaction_mode}`", inline=False)
         await ctx.send(embed=embed)
