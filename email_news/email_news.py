@@ -1,8 +1,8 @@
 import asyncio
 import json
 import base64
-import email
-import email.utils
+import email as email_parser_module # Alias email to email_parser_module
+# email.utils is accessible via email_parser_module.utils
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 
@@ -301,56 +301,64 @@ class EmailNews(commands.Cog):
                     try:
                         print(f"[EmailNews] Processing email number: {num} (type: {type(num)})")
                         # Fetch the full email message - num MUST be a string
-                        _, msg_data = await imap_client.fetch(num.decode(), "(RFC822)")
-                        # More detailed logging for msg_data structure
-                        log.debug(f"Full msg_data for {num.decode()}: {msg_data}")
-                        log.debug(f"Type of msg_data: {type(msg_data)}")
-                        if msg_data and isinstance(msg_data, list) and len(msg_data) > 0:
-                            log.debug(f"Type of msg_data[0]: {type(msg_data[0])}")
-                            if isinstance(msg_data[0], tuple) and len(msg_data[0]) == 2:
-                                log.debug(f"msg_data[0][0] (metadata): {msg_data[0][0]}")
-                                log.debug(f"Type of msg_data[0][1] (body): {type(msg_data[0][1])}")
-                                email_body = msg_data[0][1]
-                            else:
-                                log.error(f"Unexpected structure for msg_data[0] for email {num}: {msg_data[0]}")
-                                continue # Skip this email
-                        else:
-                            log.error(f"Unexpected or empty msg_data for email {num}: {msg_data}")
-                            continue # Skip this email
+                        # num is already bytes. fetch can take bytes.
+                        _, msg_data = await imap_client.fetch(num, "(RFC822)")
+                        decoded_num_str = num.decode('utf-8', 'ignore') # For logging
 
-                        print(f"[EmailNews] Fetched email body for {num}.")
+                        log.debug(f"Full msg_data for {decoded_num_str}: {msg_data}")
+                        log.debug(f"Type of msg_data: {type(msg_data)}")
+                        email_body = None # Initialize
+
+                        if not msg_data or not isinstance(msg_data, list) or len(msg_data) == 0:
+                            log.error(f"Unexpected or empty msg_data for email {decoded_num_str}: {msg_data}")
+                            continue
+
+                        # Check for flat list structure: [b'HEADER_INFO', b'BODY_DATA', ...]
+                        if len(msg_data) >= 2 and isinstance(msg_data[0], bytes) and isinstance(msg_data[1], bytes):
+                            if b"RFC822" in msg_data[0]: # Simple check for metadata
+                                log.debug(f"Detected flat list structure for msg_data. msg_data[0]: {msg_data[0][:100]}, type(msg_data[1]): {type(msg_data[1])}")
+                                email_body = msg_data[1]
+                        
+                        # If not flat list, or if email_body not set, check for tuple structure: [(b'HEADER_INFO', b'BODY_DATA'), b')']
+                        if email_body is None and isinstance(msg_data[0], tuple) and len(msg_data[0]) == 2 and isinstance(msg_data[0][1], bytes):
+                            log.debug(f"Detected tuple structure for msg_data[0]. msg_data[0][0]: {msg_data[0][0]}, type(msg_data[0][1]): {type(msg_data[0][1])}")
+                            email_body = msg_data[0][1]
+
+                        if email_body is None:
+                            log.error(f"Could not extract email_body. Unexpected structure for msg_data elements for email {decoded_num_str}. msg_data: {msg_data}")
+                            continue
+
+                        print(f"[EmailNews] Fetched email body for {decoded_num_str}.")
                         log.debug(f"Type of initial email_body: {type(email_body)}")
                         log.debug(f"Initial email_body (first 200 chars): {str(email_body)[:200]}")
 
                         email_body_bytes = None
-                        if isinstance(email_body, str):
+                        if isinstance(email_body, str): # Should ideally be bytes from IMAP
                             email_body_bytes = email_body.encode('utf-8', errors='replace')
                         elif isinstance(email_body, bytes):
                             email_body_bytes = email_body
                         else:
-                            log.debug(f"email_body is neither str nor bytes, attempting to convert to string then bytes. Type: {type(email_body)}")
-                            try:
+                            log.error(f"email_body is neither str nor bytes after extraction. Type: {type(email_body)}. Email {decoded_num_str}")
+                            try: # Attempt conversion if it's some other weird type
                                 email_body_bytes = str(email_body).encode('utf-8', errors='replace')
                             except Exception as e_conv:
-                                log.error(f"Could not convert email_body of type {type(email_body)} to bytes: {e_conv}")
+                                log.error(f"Could not convert email_body of type {type(email_body)} to bytes: {e_conv}. Email {decoded_num_str}")
                                 continue
-                            
-                            log.debug(f"Type of email_body_bytes before parsing: {type(email_body_bytes)}")
-                            log.debug(f"email_body_bytes (first 200 bytes as string if possible): {email_body_bytes[:200].decode('utf-8', 'ignore') if email_body_bytes else 'None'}")
+                        
+                        log.debug(f"Type of email_body_bytes before parsing: {type(email_body_bytes)}")
+                        log.debug(f"email_body_bytes (first 200 bytes as string if possible): {email_body_bytes[:200].decode('utf-8', 'ignore') if email_body_bytes else 'None'}")
 
-                            if email_body_bytes:
-                                # Removed import from here
-                                email_obj = email_parser_module.message_from_bytes(email_body_bytes) # Renamed msg to email_obj
-                            else:
-                                log.warning(f"Skipping email {num} due to empty or unconvertible body.")
-                                continue
+                        if not email_body_bytes: # Check if email_body_bytes is empty or None
+                            log.warning(f"Skipping email {decoded_num_str} due to empty or unconvertible body after extraction.")
+                            continue
+                        
+                        email_obj = email_parser_module.message_from_bytes(email_body_bytes)
                             
-                            # Use email_obj and email_parser_module consistently
-                            from_address_raw = email_parser_module.utils.parseaddr(email_obj["From"])[1]
-                            from_address = from_address_raw.lower() # Convert to lowercase for case-insensitive comparison
-                            subject = email_obj["Subject"]
-                            date = email_obj["Date"]
-                            print(f"[EmailNews] Email From (raw): {from_address_raw}, (lower): {from_address}, Subject: {subject}")
+                        from_address_raw = email_parser_module.utils.parseaddr(email_obj["From"])[1]
+                        from_address = from_address_raw.lower()
+                        subject = email_obj["Subject"]
+                        date = email_obj["Date"]
+                        print(f"[EmailNews] Email From (raw): {from_address_raw}, (lower): {from_address}, Subject: {subject}")
                             
                         # Prepare filter keys for case-insensitive comparison
                         lowercase_filters = {k.lower(): v for k, v in filters.items()}
@@ -359,15 +367,15 @@ class EmailNews(commands.Cog):
                         # Check if this sender is in our filters (case-insensitive)
                         if from_address in lowercase_filters:
                             print(f"[EmailNews] Sender {from_address} (matched from {from_address_raw}) is in lowercase_filters.")
-                            channel_id = lowercase_filters[from_address] # Use the lowercase key to get channel_id
+                            channel_id = lowercase_filters[from_address]
                             channel = guild.get_channel(channel_id)
                             
                             if channel:
                                 print(f"[EmailNews] Target channel found: {channel.name} ({channel.id})")
-                                # Extract email content
+                                # Extract email content using email_obj
                                 content = ""
-                                if email_message.is_multipart():
-                                    for part in email_message.walk():
+                                if email_obj.is_multipart(): # Fixed: email_message -> email_obj
+                                    for part in email_obj.walk(): # Fixed: email_message -> email_obj
                                         if part.get_content_type() == "text/plain":
                                             try:
                                                 content = part.get_payload(decode=True).decode('utf-8', errors='replace')
@@ -376,7 +384,7 @@ class EmailNews(commands.Cog):
                                             break
                                 else:
                                     try:
-                                        content = email_message.get_payload(decode=True).decode('utf-8', errors='replace')
+                                        content = email_obj.get_payload(decode=True).decode('utf-8', errors='replace') # Fixed: email_message -> email_obj
                                     except (UnicodeDecodeError, AttributeError):
                                         content = "Could not decode email content."
                                 
