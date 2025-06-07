@@ -75,15 +75,36 @@ class HelpDetector(commands.Cog):
             # Update cooldown
             self.cooldowns[user_id] = now
 
-            # Send help channel reminder
+            # Send help channel reminder and add reactions
             try:
                 await message.reply(
                     f"Hi! It looks like you need help. Please check out {help_channel.mention} "
                     f"where our community can better assist you!",
                     mention_author=False
                 )
+                print(f"Replied to message ID: {message.id}") # Debug log for reply
             except Exception as e:
                 print(f"Error sending help message: {e}") # Log error for debugging
+
+            try:
+                # Emoji IDs provided by user
+                emoji_icanhelp = self.bot.get_emoji(1375343348562264165)
+                emoji_pmstaff = self.bot.get_emoji(1375343355411562536)
+
+                if emoji_icanhelp:
+                    await message.add_reaction(emoji_icanhelp)
+                    print(f"Added icanhelp reaction to message ID: {message.id}") # Debug log for reaction
+                else:
+                    print(f"Could not find emoji 0_icanhelp (ID: 1375343348562264165)")
+                
+                if emoji_pmstaff:
+                    await message.add_reaction(emoji_pmstaff)
+                    print(f"Added pmstaff reaction to message ID: {message.id}") # Debug log for reaction
+                else:
+                    print(f"Could not find emoji 0_pmstaff (ID: 1375343355411562536)")
+
+            except Exception as e:
+                print(f"Error adding reactions: {e}") # Log error for reactions
 
     @commands.group()
     @checks.admin_or_permissions(manage_guild=True)
