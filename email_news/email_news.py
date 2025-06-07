@@ -235,122 +235,118 @@ class EmailNews(commands.Cog):
         await ctx.send(f"✅ Email check interval set to {human_readable}.")
 
     async def check_emails(self, guild, manual_trigger=False):
-        print(f"[EmailNews] Starting email check for guild: {guild.name} ({guild.id})")
+        log.info(f"Starting email check for guild: {guild.name} ({guild.id})")
         # Check if enough time has passed since last check, unless manually triggered
         if not manual_trigger:
             last_check = await self.config.guild(guild).last_check()
             check_interval = await self.config.guild(guild).check_interval()
-            print(f"[EmailNews] Last check: {last_check}, Interval: {check_interval}")
+            log.info(f"Last check: {last_check}, Interval: {check_interval}")
             
             if last_check is not None:
                 now = datetime.now(timezone.utc).timestamp()
                 time_since_last_check = now - last_check
-                print(f"[EmailNews] Time since last check: {time_since_last_check} seconds")
+                log.info(f"Time since last check: {time_since_last_check} seconds")
                 
                 if time_since_last_check < check_interval:
-                    print("[EmailNews] Interval not elapsed. Skipping check.")
+                    log.info("Interval not elapsed. Skipping check.")
                     return 0 # Skip check if interval hasn't elapsed
             
             # Update last check timestamp only for automated checks
             await self.config.guild(guild).last_check.set(datetime.now(timezone.utc).timestamp())
-            print("[EmailNews] Updated last_check timestamp.")
+            log.info("Updated last_check timestamp.")
         """Check for new emails and forward them to appropriate channels."""
         await self.initialize_encryption(guild.id)
         
         accounts = await self.config.guild(guild).email_accounts()
         filters = await self.config.guild(guild).sender_filters()
-        print(f"[EmailNews] Found {len(accounts)} email account(s) and {len(filters)} sender filter(s).")
+        log.info(f"Found {len(accounts)} email account(s) and {len(filters)} sender filter(s).")
         processed_email_count = 0
 
-        for email, encrypted_data in accounts.items():
+        for email_account_address, encrypted_data in accounts.items(): # Renamed 'email' to 'email_account_address' to avoid confusion
             try:
                 creds = self.decrypt_credentials(encrypted_data)
                 imap_client = aioimaplib.IMAP4_SSL("imap.gmail.com")
                 await imap_client.wait_hello_from_server()
-                print(f"[EmailNews] Logging into: {creds['email']}")
+                log.info(f"Logging into: {creds['email']}")
                 login_status, login_data = await imap_client.login(creds["email"], creds["password"])
-                print(f"[EmailNews] Login attempt status: {login_status}, data: {login_data}")
+                log.info(f"Login attempt status: {login_status}, data: {login_data}")
 
                 if login_status != 'OK':
-                    print(f"[EmailNews] Login failed for {creds['email']}. Status: {login_status}, Reason: {login_data}")
-                    # Attempt to logout even if login failed, to clean up connection if possible
+                    log.error(f"Login failed for {creds['email']}. Status: {login_status}, Reason: {login_data}")
                     try:
                         await imap_client.logout()
-                        print(f"[EmailNews] Logged out (after failed login attempt) from {creds['email']}.")
+                        log.info(f"Logged out (after failed login attempt) from {creds['email']}.")
                     except Exception as logout_err:
-                        print(f"[EmailNews] Error during logout after failed login for {creds['email']}: {logout_err}")
+                        log.error(f"Error during logout after failed login for {creds['email']}: {logout_err}")
                     continue # Skip to the next account
 
-                print(f"[EmailNews] Logged in successfully. Selecting INBOX.")
+                log.info(f"Logged in successfully. Selecting INBOX.")
                 await imap_client.select("INBOX")
-                print("[EmailNews] INBOX selected.")
+                log.info("INBOX selected.")
 
-                # Search for unread emails
-                print("[EmailNews] Searching for unseen and undeleted emails...")
-                # Using (UNSEEN UNDELETED) for a more robust search
+                log.info("Searching for unseen and undeleted emails...")
                 status, messages = await imap_client.search("(UNSEEN UNDELETED)")
                 if status == 'OK':
                     message_numbers = messages[0].split()
-                    print(f"[EmailNews] IMAP search returned: {messages[0]}")
-                    print(f"[EmailNews] Found {len(message_numbers)} unseen and undeleted email(s).")
+                    log.info(f"IMAP search returned: {messages[0]}")
+                    log.info(f"Found {len(message_numbers)} unseen and undeleted email(s).")
                 else:
-                    print(f"[EmailNews] IMAP search failed with status: {status}. Response: {messages}")
+                    log.error(f"IMAP search failed with status: {status}. Response: {messages}")
                     message_numbers = []
 
                 for num in message_numbers:
+                    decoded_num_str = num.decode('utf-8', 'ignore') if isinstance(num, bytes) else str(num)
                     try:
-                        print(f"[EmailNews] Processing email number: {num} (type: {type(num)})")
-                        # Fetch the full email message - num MUST be a string
-                        # num is already bytes. fetch can take bytes.
+                        log.info(f"Processing email number: {decoded_num_str} (type: {type(num)})")
                         _, msg_data = await imap_client.fetch(num, "(RFC822)")
-                        decoded_num_str = num.decode('utf-8', 'ignore') # For logging
-
-                        log.debug(f"Full msg_data for {decoded_num_str}: {msg_data}")
+                        
+                        log.debug(f"Full msg_data for {decoded_num_str}: {str(msg_data)[:1000]}...") # Log first 1000 chars
                         log.debug(f"Type of msg_data: {type(msg_data)}")
-                        email_body = None # Initialize
+                        email_body = None 
 
                         if not msg_data or not isinstance(msg_data, list) or len(msg_data) == 0:
-                            log.error(f"Unexpected or empty msg_data for email {decoded_num_str}: {msg_data}")
+                            log.error(f"Unexpected or empty msg_data for email {decoded_num_str}. Full msg_data: {str(msg_data)[:1000]}")
                             continue
 
-                        # Check for flat list structure: [b'HEADER_INFO', b'BODY_DATA', ...]
                         if len(msg_data) >= 2 and isinstance(msg_data[0], bytes) and isinstance(msg_data[1], bytes):
-                            if b"RFC822" in msg_data[0]: # Simple check for metadata
-                                log.debug(f"Detected flat list structure for msg_data. msg_data[0]: {msg_data[0][:100]}, type(msg_data[1]): {type(msg_data[1])}")
+                            if b"RFC822" in msg_data[0]:
+                                log.debug(f"Detected flat list structure for {decoded_num_str}. msg_data[0]: {msg_data[0][:100]}, type(msg_data[1]): {type(msg_data[1])}")
                                 email_body = msg_data[1]
                         
-                        # If not flat list, or if email_body not set, check for tuple structure: [(b'HEADER_INFO', b'BODY_DATA'), b')']
                         if email_body is None and isinstance(msg_data[0], tuple) and len(msg_data[0]) == 2 and isinstance(msg_data[0][1], bytes):
-                            log.debug(f"Detected tuple structure for msg_data[0]. msg_data[0][0]: {msg_data[0][0]}, type(msg_data[0][1]): {type(msg_data[0][1])}")
+                            log.debug(f"Detected tuple structure for {decoded_num_str}. msg_data[0][0]: {str(msg_data[0][0])[:100]}, type(msg_data[0][1]): {type(msg_data[0][1])}")
                             email_body = msg_data[0][1]
 
                         if email_body is None:
-                            log.error(f"Could not extract email_body. Unexpected structure for msg_data elements for email {decoded_num_str}. msg_data: {msg_data}")
+                            log.error(f"Failed to extract email_body for {decoded_num_str} using known structures. msg_data (first 1000 chars): {str(msg_data)[:1000]}")
                             continue
-
-                        print(f"[EmailNews] Fetched email body for {decoded_num_str}.")
-                        log.debug(f"Type of initial email_body: {type(email_body)}")
-                        log.debug(f"Initial email_body (first 200 chars): {str(email_body)[:200]}")
+                        
+                        log.debug(f"Extracted email_body for {decoded_num_str}. Type: {type(email_body)}. Value (first 200): {str(email_body)[:200]}")
 
                         email_body_bytes = None
-                        if isinstance(email_body, str): # Should ideally be bytes from IMAP
-                            email_body_bytes = email_body.encode('utf-8', errors='replace')
-                        elif isinstance(email_body, bytes):
+                        if isinstance(email_body, bytes):
                             email_body_bytes = email_body
+                            log.debug(f"email_body for {decoded_num_str} is bytes. Length: {len(email_body_bytes)}")
+                        elif isinstance(email_body, str):
+                            log.warning(f"email_body for {decoded_num_str} is str. Converting to bytes. Value (first 200): {email_body[:200]}")
+                            email_body_bytes = email_body.encode('utf-8', errors='replace')
                         else:
-                            log.error(f"email_body is neither str nor bytes after extraction. Type: {type(email_body)}. Email {decoded_num_str}")
-                            try: # Attempt conversion if it's some other weird type
+                            log.error(f"email_body for {decoded_num_str} is UNEXPECTED type: {type(email_body)}. Value: {str(email_body)[:200]}. Attempting str conversion to bytes.")
+                            try:
                                 email_body_bytes = str(email_body).encode('utf-8', errors='replace')
                             except Exception as e_conv:
-                                log.error(f"Could not convert email_body of type {type(email_body)} to bytes: {e_conv}. Email {decoded_num_str}")
-                                continue
-                        
-                        log.debug(f"Type of email_body_bytes before parsing: {type(email_body_bytes)}")
-                        log.debug(f"email_body_bytes (first 200 bytes as string if possible): {email_body_bytes[:200].decode('utf-8', 'ignore') if email_body_bytes else 'None'}")
+                                log.critical(f"Fatal: Could not convert email_body of type {type(email_body)} to bytes for email {decoded_num_str}: {e_conv}", exc_info=True)
+                                continue 
 
-                        if not email_body_bytes: # Check if email_body_bytes is empty or None
-                            log.warning(f"Skipping email {decoded_num_str} due to empty or unconvertible body after extraction.")
+                        if not email_body_bytes:
+                            log.warning(f"Skipping email {decoded_num_str} because email_body_bytes is empty or None after conversion attempts.")
                             continue
+                        
+                        log.debug(f"Prepared email_body_bytes for {decoded_num_str}. Type: {type(email_body_bytes)}. Length: {len(email_body_bytes)}. Preview (first 200 as str): {email_body_bytes[:200].decode('utf-8', 'ignore')}")
+                        
+                        log.debug(f"DEBUG: Type of email_parser_module before use: {type(email_parser_module)}, Value: {str(email_parser_module)[:200]}")
+                        if not hasattr(email_parser_module, 'message_from_bytes'):
+                            log.critical(f"CRITICAL: email_parser_module (type: {type(email_parser_module)}) does not have 'message_from_bytes'. Value: {str(email_parser_module)[:200]}")
                         
                         email_obj = email_parser_module.message_from_bytes(email_body_bytes)
                             
@@ -358,24 +354,21 @@ class EmailNews(commands.Cog):
                         from_address = from_address_raw.lower()
                         subject = email_obj["Subject"]
                         date = email_obj["Date"]
-                        print(f"[EmailNews] Email From (raw): {from_address_raw}, (lower): {from_address}, Subject: {subject}")
+                        log.info(f"Email From (raw): {from_address_raw}, (lower): {from_address}, Subject: {subject}")
                             
-                        # Prepare filter keys for case-insensitive comparison
                         lowercase_filters = {k.lower(): v for k, v in filters.items()}
-                        print(f"[EmailNews] Checking against lowercase filters: {list(lowercase_filters.keys())}")
+                        log.debug(f"Checking against lowercase filters: {list(lowercase_filters.keys())}")
 
-                        # Check if this sender is in our filters (case-insensitive)
                         if from_address in lowercase_filters:
-                            print(f"[EmailNews] Sender {from_address} (matched from {from_address_raw}) is in lowercase_filters.")
+                            log.info(f"Sender {from_address} (matched from {from_address_raw}) is in lowercase_filters.")
                             channel_id = lowercase_filters[from_address]
                             channel = guild.get_channel(channel_id)
                             
                             if channel:
-                                print(f"[EmailNews] Target channel found: {channel.name} ({channel.id})")
-                                # Extract email content using email_obj
+                                log.info(f"Target channel found: {channel.name} ({channel.id})")
                                 content = ""
-                                if email_obj.is_multipart(): # Fixed: email_message -> email_obj
-                                    for part in email_obj.walk(): # Fixed: email_message -> email_obj
+                                if email_obj.is_multipart():
+                                    for part in email_obj.walk():
                                         if part.get_content_type() == "text/plain":
                                             try:
                                                 content = part.get_payload(decode=True).decode('utf-8', errors='replace')
@@ -384,11 +377,10 @@ class EmailNews(commands.Cog):
                                             break
                                 else:
                                     try:
-                                        content = email_obj.get_payload(decode=True).decode('utf-8', errors='replace') # Fixed: email_message -> email_obj
+                                        content = email_obj.get_payload(decode=True).decode('utf-8', errors='replace')
                                     except (UnicodeDecodeError, AttributeError):
                                         content = "Could not decode email content."
                                 
-                                # Create and send embed
                                 embed = discord.Embed(
                                     title=subject,
                                     description=content[:2000] if content else "No content",
@@ -400,21 +392,20 @@ class EmailNews(commands.Cog):
                                 
                                 await channel.send(embed=embed)
                                 
-                                # Mark email as read
                                 await imap_client.store(num, "+FLAGS", "(\\Seen)")
-                                print(f"[EmailNews] Marked email {num} as Seen.")
+                                log.info(f"Marked email {decoded_num_str} as Seen.")
                                 processed_email_count += 1
-                                print(f"[EmailNews] Pausing for 5 seconds before processing next email...")
-                                await asyncio.sleep(5)  # Pause for 5 seconds
+                                log.info(f"Pausing for 5 seconds before processing next email...")
+                                await asyncio.sleep(5)
                     except Exception as e:
-                        print(f"[EmailNews] Error processing email {num}: {str(e)}")
+                        log.error(f"Error processing email {decoded_num_str}: {str(e)}", exc_info=True)
                         continue
 
                 await imap_client.logout()
-                print(f"[EmailNews] Logged out from {creds['email']}.")
+                log.info(f"Logged out from {creds['email']}.")
             except Exception as e:
-                print(f"[EmailNews] Error checking emails for account {email}: {str(e)}")
-        print(f"[EmailNews] Email check finished for guild {guild.name}. Processed {processed_email_count} email(s).")
+                log.error(f"Error checking emails for account {email_account_address}: {str(e)}", exc_info=True) # Added exc_info
+        log.info(f"Email check finished for guild {guild.name}. Processed {processed_email_count} email(s).")
         return processed_email_count
 
     async def start_email_checking(self):
