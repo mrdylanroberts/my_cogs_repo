@@ -284,12 +284,12 @@ class EmailNews(commands.Cog):
                 await imap_client.select("INBOX")
                 log.info("INBOX selected.")
 
-                log.info("Searching for unseen and undeleted emails...")
-                status, messages = await imap_client.search("UTF-8", "(UNSEEN)")
+                log.info("Searching for all emails...")
+                status, messages = await imap_client.search("UTF-8", "(ALL)")
                 if status == 'OK':
                     message_numbers = messages[0].split()
                     log.info(f"IMAP search returned: {messages[0]}")
-                    log.info(f"Found {len(message_numbers)} unseen and undeleted email(s).")
+                    log.info(f"Found {len(message_numbers)} email(s).")
                 else:
                     log.error(f"IMAP search failed with status: {status}. Response: {messages}")
                     message_numbers = []
