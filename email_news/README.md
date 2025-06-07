@@ -12,14 +12,22 @@ A secure cog that allows forwarding emails from specific senders to designated D
 
 ## Installation
 
-1. Add the repository to your bot:
+1. Add this repository to your bot (replace `<your_repo_name>` with a name you choose, e.g., `mycogs`, and `<your_github_username>` with your GitHub username):
 ```
-[p]repo add my-cogs-repo <repository-url>
+[p]repo add <your_repo_name> https://github.com/<your_github_username>/my_cogs_repo.git
+```
+   For example, if your GitHub username is `mrdylanroberts` and you want to name the repo `dylanscogs`:
+```
+[p]repo add dylanscogs https://github.com/mrdylanroberts/my_cogs_repo.git
 ```
 
-2. Install the cog:
+2. Install the cog (use the repo name you chose above):
 ```
-[p]cog install my-cogs-repo email_news
+[p]cog install <your_repo_name> email_news
+```
+   Example:
+```
+[p]cog install dylanscogs email_news
 ```
 
 3. Load the cog:
@@ -29,52 +37,62 @@ A secure cog that allows forwarding emails from specific senders to designated D
 
 ## Initial Setup
 
-Before using the cog, you need to set up a secure encryption key. Use the following command to set it:
+Before using the cog, you **must** set up a secure encryption key. This key is used to encrypt your email account credentials. **Choose a strong, unique secret key and keep it safe.**
+
+Use the following command in Discord (replace `<your-secret-key>` with your chosen secret):
 ```
 [p]set api email_news secret,<your-secret-key>
 ```
-Replace `<your-secret-key>` with a strong, random string. Keep this key secure as it's used to encrypt email credentials.
+**Important:** There should be **no spaces** around the comma.
 
 ## Commands
 
 ### Email Account Setup
+
 ```
-[p]emailnews setup <email> <password>
+[p]emailnews setup <email_address> <password_or_app_password>
 ```
-- Sets up an email account for monitoring
-- Use this command in a server channel (credentials will be deleted and response sent via DM)
-- Currently supports Gmail accounts
+-   **Purpose:** Configures an email account for the cog to monitor.
+-   **Security:** Use this command in any server channel. The command message containing your credentials will be deleted automatically, and the bot will confirm success or failure via Direct Message (DM).
+-   **Supported Accounts:** Primarily designed and tested with Gmail. For Gmail accounts with 2-Factor Authentication (2FA) enabled, you **must** use an [App Password](https://support.google.com/accounts/answer/185833). If 2FA is not enabled, you might need to enable "Less secure app access" (though using an App Password is more secure and recommended).
 
 ### Sender Management
-```
-[p]emailnews addsender <sender_email> [channel]
-```
-- Adds a sender email to forward messages from
-- Optionally specify a channel (defaults to current channel)
 
+**Add a Sender Filter:**
 ```
-[p]emailnews removesender <sender_email>
+[p]emailnews addsender <sender_email_address> [target_channel]
 ```
-- Removes a sender email from the forwarding list
+-   **Purpose:** Specifies that emails from `<sender_email_address>` should be forwarded.
+-   **Channel:** If `[target_channel]` is omitted, emails will be sent to the channel where you run the command. You can also specify a different channel (e.g., `#newsletters`).
 
+**Remove a Sender Filter:**
+```
+[p]emailnews removesender <sender_email_address>
+```
+-   **Purpose:** Stops forwarding emails from the specified sender.
+
+**List Sender Filters:**
 ```
 [p]emailnews listsenders
 ```
-- Lists all configured sender filters and their target channels
+-   **Purpose:** Shows all currently configured sender email addresses and the Discord channels they forward to.
 
-### Configuration
+### Configuration & Manual Check
+
+**Set Check Interval:**
 ```
 [p]emailnews interval <seconds>
 ```
-- Sets how often to check for new emails
-- Minimum interval: 3600 seconds (1 hour)
-- Default interval: 21600 seconds (6 hours)
-- Rate limited to prevent excessive email server requests
+-   **Purpose:** Defines how frequently the cog automatically checks for new emails.
+-   **Minimum:** 3600 seconds (1 hour) to prevent issues with email provider rate limits.
+-   **Default:** 21600 seconds (6 hours).
 
+**Manual Email Check:**
 ```
 [p]emailnews checknow
 ```
-- Manually triggers an email check and forwards new emails
+-   **Purpose:** Immediately triggers the email checking process. Useful for testing or fetching emails on demand.
+-   **Feedback:** The command will report if emails were found and processed. Check your bot's console/logs for detailed activity, especially if troubleshooting.
 
 ## Security Considerations
 
@@ -95,12 +113,15 @@ The bot needs the following permissions in channels where it will forward emails
 
 If you encounter any issues or need assistance, please create an issue in the repository.
 
-## Note
+## Gmail Specifics
 
-This cog is designed to work with Gmail accounts. If you're using Gmail, make sure to:
-1. Enable "Less secure app access" or
-2. Create an App Password if you have 2FA enabled
+This cog is primarily designed and tested with Gmail accounts. When using Gmail:
+
+1.  **2-Factor Authentication (2FA) Enabled (Recommended):** You **must** create and use an [App Password](https://support.google.com/accounts/answer/185833) for the `<password_or_app_password>` field in the `[p]emailnews setup` command. This is the most secure method.
+2.  **2FA Disabled:** You *may* need to enable "[Less secure app access](https://support.google.com/accounts/answer/6010255)" in your Google account settings. However, this is less secure and using an App Password with 2FA is strongly advised.
 
 ## Disclaimer
 
-Store email credentials securely and only use dedicated email accounts for this purpose. Never use your primary email account.
+-   Always use strong, unique passwords or App Passwords for the email account you configure with this cog.
+-   It is highly recommended to use a dedicated email account specifically for this cog, rather than your personal or primary email account.
+-   The cog includes features to enhance security (encryption, DM for setup), but you are responsible for safeguarding your API secret key and managing access to your bot and server.
