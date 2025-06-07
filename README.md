@@ -28,6 +28,8 @@ This repository contains custom cogs for Red-DiscordBot.
   - 📧 Forward unread emails from specific senders
   - ⚙️ Configurable email checking interval
   - 🎯 Selective forwarding based on sender addresses
+  - 📂 Predefined list of common newsletter senders that can be loaded easily
+  - 📢 Configurable default channel for new senders
   - 🔐 Secure setup process through DMs
 
 ## Installation

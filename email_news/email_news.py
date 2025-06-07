@@ -36,7 +36,16 @@ class EmailNews(commands.Cog):
             "sender_filters": {},  # Sender email -> channel_id mapping
             "check_interval": 21600,  # 6 hours
             "last_check": None,  # Timestamp of last email check
+            "default_channel_id": None, # Channel to send default sender emails to
         }
+
+        self.DEFAULT_SENDERS_LIST = [
+            "clint@tldrsec.com",
+            "newsletter@unsupervised-learning.com",
+            "dan@tldrnewsletter.com",
+            "mike@mail.returnnonsecurity.com",
+            "vulnu@vulnu.mattjay.com"
+        ]
         
         self.config.register_guild(**default_guild)
 
@@ -119,12 +128,51 @@ class EmailNews(commands.Cog):
     @emailnews.command(name="addsender")
     async def add_sender(self, ctx: commands.Context, sender_email: str, channel: Optional[discord.TextChannel] = None):
         """Add a sender email address to forward messages from."""
-        channel = channel or ctx.channel
+        if not channel:
+            default_channel_id = await self.config.guild(ctx.guild).default_channel_id()
+            if default_channel_id:
+                channel = ctx.guild.get_channel(default_channel_id)
+            if not channel: # Still no channel, use current or ask
+                channel = ctx.channel
+                await ctx.send(f"⚠️ No default channel set. Using current channel {channel.mention}. You can set a default with `!emailnews setdefaultchannel`.")
         
         async with self.config.guild(ctx.guild).sender_filters() as filters:
             filters[sender_email] = channel.id
         
         await ctx.send(f"✅ Messages from {sender_email} will be forwarded to {channel.mention}")
+
+    @emailnews.command(name="setdefaultchannel")
+    async def set_default_channel(self, ctx: commands.Context, channel: discord.TextChannel):
+        """Sets the default channel for new sender filters if not specified."""
+        await self.config.guild(ctx.guild).default_channel_id.set(channel.id)
+        await ctx.send(f"✅ Default channel for sender filters set to {channel.mention}.")
+
+    @emailnews.command(name="loaddefaults")
+    async def load_default_senders(self, ctx: commands.Context, target_channel: Optional[discord.TextChannel] = None):
+        """Loads a predefined list of common newsletter senders."""
+        if not target_channel:
+            default_channel_id = await self.config.guild(ctx.guild).default_channel_id()
+            if default_channel_id:
+                target_channel = ctx.guild.get_channel(default_channel_id)
+            if not target_channel: # Still no channel, use current or error
+                target_channel = ctx.channel
+                await ctx.send(f"⚠️ No default channel set. Using current channel {target_channel.mention} for these defaults. You can set a default with `!emailnews setdefaultchannel`.")
+
+        if not target_channel:
+            await ctx.send("❌ Could not determine a target channel. Please specify one or set a default channel.")
+            return
+
+        added_count = 0
+        async with self.config.guild(ctx.guild).sender_filters() as filters:
+            for sender in self.DEFAULT_SENDERS_LIST:
+                if sender not in filters:
+                    filters[sender] = target_channel.id
+                    added_count += 1
+        
+        if added_count > 0:
+            await ctx.send(f"✅ Added {added_count} default sender(s) to forward to {target_channel.mention}.")
+        else:
+            await ctx.send("✅ All default senders are already in your filter list for this server.")
 
     @emailnews.command(name="removesender")
     async def remove_sender(self, ctx: commands.Context, sender_email: str):
@@ -248,11 +296,30 @@ class EmailNews(commands.Cog):
                         print(f"[EmailNews] Processing email number: {num}")
                         # Fetch the full email message
                         _, msg_data = await imap_client.fetch(num, "(RFC822)")
+                        print(f"[EmailNews] DEBUG: Raw msg_data[0][0] for {num}: {msg_data[0][0]}")
                         email_body = msg_data[0][1]
                         print(f"[EmailNews] Fetched email body for {num}.")
+                        print(f"[EmailNews] DEBUG: Type of initial email_body: {type(email_body)}")
+                        if isinstance(email_body, bytes):
+                            print(f"[EmailNews] DEBUG: Initial email_body (first 200 bytes as string if possible): {email_body[:200].decode('utf-8', 'replace')}")
+                        else:
+                            print(f"[EmailNews] DEBUG: Initial email_body (first 200 chars): {str(email_body)[:200]}")
                         
                         # Parse email headers
-                        email_message = email.message_from_bytes(email_body)
+                        # Ensure email_body is bytes for message_from_bytes
+                        if isinstance(email_body, str):
+                            print(f"[EmailNews] DEBUG: email_body is string, encoding to bytes.")
+                            email_body_bytes = email_body.encode('utf-8', errors='replace') # Encode to bytes, replace errors
+                        elif isinstance(email_body, bytes):
+                            print(f"[EmailNews] DEBUG: email_body is already bytes.")
+                            email_body_bytes = email_body # Assume it's already bytes
+                        else:
+                            print(f"[EmailNews] DEBUG: email_body is neither str nor bytes, attempting to convert to string then bytes. Type: {type(email_body)}")
+                            email_body_bytes = str(email_body).encode('utf-8', errors='replace')
+
+                        print(f"[EmailNews] DEBUG: Type of email_body_bytes before parsing: {type(email_body_bytes)}")
+                        print(f"[EmailNews] DEBUG: email_body_bytes (first 200 bytes as string if possible): {email_body_bytes[:200].decode('utf-8', 'replace')}")
+                        email_message = email.message_from_bytes(email_body_bytes)
                         from_address_raw = email.utils.parseaddr(email_message["From"])[1]
                         from_address = from_address_raw.lower() # Convert to lowercase for case-insensitive comparison
                         subject = email_message["Subject"]
@@ -276,10 +343,16 @@ class EmailNews(commands.Cog):
                                 if email_message.is_multipart():
                                     for part in email_message.walk():
                                         if part.get_content_type() == "text/plain":
-                                            content = part.get_payload(decode=True).decode()
+                                            try:
+                                                content = part.get_payload(decode=True).decode('utf-8', errors='replace')
+                                            except (UnicodeDecodeError, AttributeError):
+                                                content = "Could not decode email content."
                                             break
                                 else:
-                                    content = email_message.get_payload(decode=True).decode()
+                                    try:
+                                        content = email_message.get_payload(decode=True).decode('utf-8', errors='replace')
+                                    except (UnicodeDecodeError, AttributeError):
+                                        content = "Could not decode email content."
                                 
                                 # Create and send embed
                                 embed = discord.Embed(

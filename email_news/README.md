@@ -35,15 +35,15 @@ A secure cog that allows forwarding emails from specific senders to designated D
 [p]load email_news
 ```
 
-## Initial Setup
+## Initial Setup: Encryption Key
 
-Before using the cog, you **must** set up a secure encryption key. This key is used to encrypt your email account credentials. **Choose a strong, unique secret key and keep it safe.**
+Before using the cog, you **must** set up a secure **encryption key**. This key is used to encrypt your email account credentials, ensuring they are stored securely. **Choose a strong, unique secret key and keep it safe. You will need this key if you ever need to manually decrypt the credentials or move your bot installation.**
 
 Use the following command in Discord (replace `<your-secret-key>` with your chosen secret):
 ```
 [p]set api email_news secret,<your-secret-key>
 ```
-**Important:** There should be **no spaces** around the comma.
+**Important:** There should be **no spaces** around the comma. This is a **mandatory one-time setup** for the cog to function securely.
 
 ## Commands
 
@@ -53,17 +53,37 @@ Use the following command in Discord (replace `<your-secret-key>` with your chos
 [p]emailnews setup <email_address> <password_or_app_password>
 ```
 -   **Purpose:** Configures an email account for the cog to monitor.
--   **Security:** Use this command in any server channel. The command message containing your credentials will be deleted automatically, and the bot will confirm success or failure via Direct Message (DM).
+-   **Security:** For your security, this command **must be used in a Direct Message (DM) with the bot**. This prevents your credentials from being visible in server channels. The bot will confirm success or failure in the DM.
 -   **Supported Accounts:** Primarily designed and tested with Gmail. For Gmail accounts with 2-Factor Authentication (2FA) enabled, you **must** use an [App Password](https://support.google.com/accounts/answer/185833). If 2FA is not enabled, you might need to enable "Less secure app access" (though using an App Password is more secure and recommended).
 
 ### Sender Management
+
+**Set Default Channel for Senders:**
+```
+[p]emailnews setdefaultchannel <#channel>
+```
+-   **Purpose:** Sets a default Discord channel for the server. Emails from newly added senders (via `addsender` or `loaddefaults`) will be forwarded to this channel if no specific channel is provided during the command.
+-   **Example:** `[p]emailnews setdefaultchannel #newsletters`
+
+**Load Default Senders:**
+```
+[p]emailnews loaddefaults [target_channel]
+```
+-   **Purpose:** Adds a predefined list of common newsletter senders to your filter list if they aren't already present. The current default list includes:
+    - `clint@tldrsec.com`
+    - `newsletter@unsupervised-learning.com`
+    - `dan@tldrnewsletter.com`
+    - `mike@mail.returnnonsecurity.com`
+    - `vulnu@vulnu.mattjay.com`
+-   **Channel:** Emails from these senders will be forwarded to the `[target_channel]` if specified. If omitted, they will be sent to the default channel set by `setdefaultchannel`. If no default channel is set, they will be sent to the channel where you run the command (the bot will notify you).
+-   **Example:** `[p]emailnews loaddefaults #security-updates` or `[p]emailnews loaddefaults`
 
 **Add a Sender Filter:**
 ```
 [p]emailnews addsender <sender_email_address> [target_channel]
 ```
 -   **Purpose:** Specifies that emails from `<sender_email_address>` should be forwarded.
--   **Channel:** If `[target_channel]` is omitted, emails will be sent to the channel where you run the command. You can also specify a different channel (e.g., `#newsletters`).
+-   **Channel:** If `[target_channel]` is omitted, emails will be sent to the default channel (if set via `setdefaultchannel`). If no default channel is set, they will be sent to the channel where you run the command. You can also specify a different channel (e.g., `#newsletters`).
 
 **Remove a Sender Filter:**
 ```
