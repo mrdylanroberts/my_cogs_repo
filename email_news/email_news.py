@@ -241,15 +241,20 @@ class EmailNews(commands.Cog):
                         
                         # Parse email headers
                         email_message = email.message_from_bytes(email_body)
-                        from_address = email.utils.parseaddr(email_message["From"])[1]
+                        from_address_raw = email.utils.parseaddr(email_message["From"])[1]
+                        from_address = from_address_raw.lower() # Convert to lowercase for case-insensitive comparison
                         subject = email_message["Subject"]
                         date = email_message["Date"]
-                        print(f"[EmailNews] Email From: {from_address}, Subject: {subject}")
+                        print(f"[EmailNews] Email From (raw): {from_address_raw}, (lower): {from_address}, Subject: {subject}")
                         
-                        # Check if this sender is in our filters
-                        if from_address in filters:
-                            print(f"[EmailNews] Sender {from_address} is in filters.")
-                            channel_id = filters[from_address]
+                        # Prepare filter keys for case-insensitive comparison
+                        lowercase_filters = {k.lower(): v for k, v in filters.items()}
+                        print(f"[EmailNews] Checking against lowercase filters: {list(lowercase_filters.keys())}")
+
+                        # Check if this sender is in our filters (case-insensitive)
+                        if from_address in lowercase_filters:
+                            print(f"[EmailNews] Sender {from_address} (matched from {from_address_raw}) is in lowercase_filters.")
+                            channel_id = lowercase_filters[from_address] # Use the lowercase key to get channel_id
                             channel = guild.get_channel(channel_id)
                             
                             if channel:
