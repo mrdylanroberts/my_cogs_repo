@@ -18,6 +18,10 @@ from redbot.core import commands, Config
 from redbot.core.bot import Red
 from redbot.core.utils.chat_formatting import box
 
+log = logging.getLogger("red.my-cogs-repo.email_news") # Instantiate the logger
+
+# Default list of sender emails
+
 class EmailNews(commands.Cog):
     """Forward emails from specified senders to Discord channels securely."""
 
@@ -293,11 +297,11 @@ class EmailNews(commands.Cog):
 
                 for num in message_numbers:
                     try:
-                        print(f"[EmailNews] Processing email number: {num}")
-                        # Fetch the full email message
-                        _, msg_data = await imap_client.fetch(num, "(RFC822)")
+                        print(f"[EmailNews] Processing email number: {num} (type: {type(num)})")
+                        # Fetch the full email message - num MUST be a string
+                        _, msg_data = await imap_client.fetch(num.decode(), "(RFC822)")
                         # More detailed logging for msg_data structure
-                        log.debug(f"Full msg_data for {num}: {msg_data}")
+                        log.debug(f"Full msg_data for {num.decode()}: {msg_data}")
                         log.debug(f"Type of msg_data: {type(msg_data)}")
                         if msg_data and isinstance(msg_data, list) and len(msg_data) > 0:
                             log.debug(f"Type of msg_data[0]: {type(msg_data[0])}")
@@ -328,25 +332,24 @@ class EmailNews(commands.Cog):
                             except Exception as e_conv:
                                 log.error(f"Could not convert email_body of type {type(email_body)} to bytes: {e_conv}")
                                 continue
-                        
-                        log.debug(f"Type of email_body_bytes before parsing: {type(email_body_bytes)}")
-                        log.debug(f"email_body_bytes (first 200 bytes as string if possible): {email_body_bytes[:200].decode('utf-8', 'ignore') if email_body_bytes else 'None'}")
+                            
+                            log.debug(f"Type of email_body_bytes before parsing: {type(email_body_bytes)}")
+                            log.debug(f"email_body_bytes (first 200 bytes as string if possible): {email_body_bytes[:200].decode('utf-8', 'ignore') if email_body_bytes else 'None'}")
 
-                        if email_body_bytes:
-                            # Ensure we are calling the email module's function, not a string variable
-                            # This was the original error point: 'str' object has no attribute 'message_from_bytes'
-                            # This implies 'email' was somehow a string. Let's be explicit.
-                            import email as email_parser_module 
-                            msg = email_parser_module.message_from_bytes(email_body_bytes)
-                        else:
-                            log.warning(f"Skipping email {num} due to empty or unconvertible body.")
-                            continue
-                        from_address_raw = email.utils.parseaddr(email_message["From"])[1]
-                        from_address = from_address_raw.lower() # Convert to lowercase for case-insensitive comparison
-                        subject = email_message["Subject"]
-                        date = email_message["Date"]
-                        print(f"[EmailNews] Email From (raw): {from_address_raw}, (lower): {from_address}, Subject: {subject}")
-                        
+                            if email_body_bytes:
+                                # Removed import from here
+                                email_obj = email_parser_module.message_from_bytes(email_body_bytes) # Renamed msg to email_obj
+                            else:
+                                log.warning(f"Skipping email {num} due to empty or unconvertible body.")
+                                continue
+                            
+                            # Use email_obj and email_parser_module consistently
+                            from_address_raw = email_parser_module.utils.parseaddr(email_obj["From"])[1]
+                            from_address = from_address_raw.lower() # Convert to lowercase for case-insensitive comparison
+                            subject = email_obj["Subject"]
+                            date = email_obj["Date"]
+                            print(f"[EmailNews] Email From (raw): {from_address_raw}, (lower): {from_address}, Subject: {subject}")
+                            
                         # Prepare filter keys for case-insensitive comparison
                         lowercase_filters = {k.lower(): v for k, v in filters.items()}
                         print(f"[EmailNews] Checking against lowercase filters: {list(lowercase_filters.keys())}")
