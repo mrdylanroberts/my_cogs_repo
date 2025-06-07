@@ -32,8 +32,23 @@ class HelpDetector(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: Message):
-        # Ignore DMs and bot messages and commands
-        if not message.guild or message.author.bot or message.content.startswith(await self.bot.get_prefix(message)):
+        # Ignore DMs and bot messages
+        if not message.guild or message.author.bot:
+            return
+
+        # Check if the message starts with a command prefix
+        prefixes = await self.bot.get_prefix(message)
+        is_command = False
+        if isinstance(prefixes, str):
+            if message.content.startswith(prefixes):
+                is_command = True
+        elif isinstance(prefixes, (list, tuple)):
+            for p in prefixes:
+                if message.content.startswith(p):
+                    is_command = True
+                    break
+        
+        if is_command:
             return
 
         # Check if message contains help keywords
