@@ -101,14 +101,13 @@ class HelpDetector(commands.Cog):
 
             # Send help channel reminder and add reactions
             try:
-                await message.reply(
-                    f"Hi! It looks like you need help. Please check out {help_channel.mention} "
-                    f"where our community can better assist you!",
-                    mention_author=False
+                await message.author.send(
+                    f"Hi! It looks like you need help. Please check out {help_channel.mention} in the '{message.guild.name}' server, "
+                    f"where our community can better assist you!"
                 )
-                print(f"Replied to message ID: {message.id}") # Debug log for reply
+                print(f"Sent DM to user {message.author.id} regarding message ID: {message.id}") # Debug log for DM
             except Exception as e:
-                print(f"Error sending help message: {e}") # Log error for debugging
+                print(f"Error sending help DM: {e}") # Log error for debugging
 
             try:
                 # Emoji IDs provided by user
