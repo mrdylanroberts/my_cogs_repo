@@ -64,7 +64,16 @@ class HelpDetector(commands.Cog):
             return
 
         msg_content = message.content.lower()
-        if any(keyword in msg_content for keyword in current_help_keywords):
+        print(f"Normalized message content for keyword check: '{msg_content}'") # Debug log
+
+        keyword_found = False
+        for keyword in current_help_keywords:
+            if keyword in msg_content:
+                print(f"Keyword '{keyword}' Matched in message: '{msg_content}'") # Debug log
+                keyword_found = True
+                break
+
+        if keyword_found:
             # Check cooldown
             user_id = message.author.id
             now = datetime.now()
@@ -105,6 +114,9 @@ class HelpDetector(commands.Cog):
 
             except Exception as e:
                 print(f"Error adding reactions: {e}") # Log error for reactions
+        else:
+            print(f"Keyword match FAILED. No configured keywords found in message: '{msg_content}' with keywords {current_help_keywords}") # Debug log
+            return
 
     @commands.group()
     @checks.admin_or_permissions(manage_guild=True)
