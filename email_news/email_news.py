@@ -117,7 +117,7 @@ class EmailNews(commands.Cog):
             await ctx.author.dm_channel.send(f"❌ Failed to configure email account: {str(e)}")
 
     @emailnews.command(name="addsender")
-    async def add_sender(self, ctx: commands.Context, sender_email: str, channel: Optional[commands.TextChannel] = None):
+    async def add_sender(self, ctx: commands.Context, sender_email: str, channel: Optional[discord.TextChannel] = None):
         """Add a sender email address to forward messages from."""
         channel = channel or ctx.channel
         
