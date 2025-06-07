@@ -152,6 +152,20 @@ class EmailNews(commands.Cog):
 
         await ctx.send(box("\n".join(output)))
 
+    @emailnews.command(name="checknow")
+    async def check_now(self, ctx: commands.Context):
+        """Manually check for new emails and forward them."""
+        if not ctx.guild:
+            await ctx.send("This command must be used in a server channel.")
+            return
+
+        await ctx.send("⏳ Manually triggering email check...")
+        try:
+            await self.check_emails(ctx.guild)
+            await ctx.send("✅ Email check manually triggered. New emails (if any) should be processed shortly.")
+        except Exception as e:
+            await ctx.send(f"❌ An error occurred during manual email check: {str(e)}")
+
     @emailnews.command(name="interval")
     async def set_interval(self, ctx: commands.Context, seconds: int):
         """Set how often to check for new emails (in seconds, minimum 3600)."""
