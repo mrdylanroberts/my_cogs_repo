@@ -285,7 +285,7 @@ class EmailNews(commands.Cog):
                 log.info("INBOX selected.")
 
                 log.info("Searching for all emails...")
-                status, messages = await imap_client.search("UTF-8", "(ALL)")
+                status, messages = await imap_client.search("(ALL)")
                 if status == 'OK':
                     message_numbers = messages[0].split()
                     log.info(f"IMAP search returned: {messages[0]}")
