@@ -220,10 +220,16 @@ class EmailNews(commands.Cog):
                 print("[EmailNews] INBOX selected.")
 
                 # Search for unread emails
-                print("[EmailNews] Searching for unseen emails...")
-                _, messages = await imap_client.search("(UNSEEN)")
-                message_numbers = messages[0].split()
-                print(f"[EmailNews] Found {len(message_numbers)} unseen email(s).")
+                print("[EmailNews] Searching for unseen and undeleted emails...")
+                # Using (UNSEEN UNDELETED) for a more robust search
+                status, messages = await imap_client.search("(UNSEEN UNDELETED)")
+                if status == 'OK':
+                    message_numbers = messages[0].split()
+                    print(f"[EmailNews] IMAP search returned: {messages[0]}")
+                    print(f"[EmailNews] Found {len(message_numbers)} unseen and undeleted email(s).")
+                else:
+                    print(f"[EmailNews] IMAP search failed with status: {status}. Response: {messages}")
+                    message_numbers = []
 
                 for num in message_numbers:
                     try:
