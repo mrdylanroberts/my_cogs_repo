@@ -235,6 +235,7 @@ class EmailNews(commands.Cog):
         await ctx.send(f"✅ Email check interval set to {human_readable}.")
 
     async def check_emails(self, guild, manual_trigger=False):
+        """Check for new emails and forward them to appropriate channels."""
         log.info(f"Starting email check for guild: {guild.name} ({guild.id})")
         # Check if enough time has passed since last check, unless manually triggered
         if not manual_trigger:
@@ -254,7 +255,7 @@ class EmailNews(commands.Cog):
             # Update last check timestamp only for automated checks
             await self.config.guild(guild).last_check.set(datetime.now(timezone.utc).timestamp())
             log.info("Updated last_check timestamp.")
-        """Check for new emails and forward them to appropriate channels."""
+        
         await self.initialize_encryption(guild.id)
         
         accounts = await self.config.guild(guild).email_accounts()
@@ -295,10 +296,10 @@ class EmailNews(commands.Cog):
                     message_numbers = []
 
                 for num in message_numbers:
-                    decoded_num_str = num.decode('utf-8', 'ignore') if isinstance(num, bytes) else str(num)
                     try:
-                        log.info(f"Processing email number: {decoded_num_str} (type: {type(num)})")
-                        _, msg_data = await imap_client.fetch(num, "(RFC822)")
+                        # Fetch the email by its ID
+                        decoded_num_str = num.decode('utf-8')
+                        typ, msg_data = await imap_client.fetch(decoded_num_str, '(RFC822)')
                         
                         log.debug(f"Full msg_data for {decoded_num_str}: {str(msg_data)[:1000]}...") # Log first 1000 chars
                         log.debug(f"Type of msg_data: {type(msg_data)}")
@@ -393,6 +394,7 @@ class EmailNews(commands.Cog):
                                 await channel.send(embed=embed)
                                 
                                 await imap_client.store(num, "+FLAGS", "(\\Seen)")
+
                                 log.info(f"Marked email {decoded_num_str} as Seen.")
                                 processed_email_count += 1
                                 log.info(f"Pausing for 5 seconds before processing next email...")
