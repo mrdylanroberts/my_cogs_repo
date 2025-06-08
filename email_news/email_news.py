@@ -26,6 +26,66 @@ log = logging.getLogger("red.my-cogs-repo.email_news") # Instantiate the logger
 
 # Default list of sender emails
 
+class EmailPaginationView(discord.ui.View):
+    """Pagination view for long email content."""
+    
+    def __init__(self, embeds: List[discord.Embed], timeout: float = 300):
+        super().__init__(timeout=timeout)
+        self.embeds = embeds
+        self.current_page = 0
+        self.max_pages = len(embeds)
+        
+        # Add numbered buttons for pages (up to 5 pages)
+        if self.max_pages <= 5:
+            for i in range(self.max_pages):
+                button = discord.ui.Button(
+                    label=str(i + 1),
+                    emoji=f"{i + 1}️⃣",
+                    style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary
+                )
+                button.callback = self.create_page_callback(i)
+                self.add_item(button)
+        else:
+            # For more than 5 pages, use previous/next buttons
+            self.add_item(self.previous_button)
+            self.add_item(self.next_button)
+    
+    def create_page_callback(self, page_num: int):
+        async def callback(interaction: discord.Interaction):
+            await self.go_to_page(interaction, page_num)
+        return callback
+    
+    async def go_to_page(self, interaction: discord.Interaction, page: int):
+        if 0 <= page < self.max_pages:
+            self.current_page = page
+            
+            # Update button styles for numbered buttons
+            if self.max_pages <= 5:
+                for i, item in enumerate(self.children):
+                    if isinstance(item, discord.ui.Button):
+                        item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
+            
+            await interaction.response.edit_message(embed=self.embeds[page], view=self)
+    
+    @discord.ui.button(label='Previous', style=discord.ButtonStyle.secondary, emoji='⬅️')
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            await self.go_to_page(interaction, self.current_page - 1)
+        else:
+            await interaction.response.defer()
+    
+    @discord.ui.button(label='Next', style=discord.ButtonStyle.secondary, emoji='➡️')
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < self.max_pages - 1:
+            await self.go_to_page(interaction, self.current_page + 1)
+        else:
+            await interaction.response.defer()
+    
+    async def on_timeout(self):
+        # Disable all buttons when the view times out
+        for item in self.children:
+            item.disabled = True
+
 class EmailNews(commands.Cog):
     """Forward emails from specified senders to Discord channels securely."""
 
@@ -146,77 +206,20 @@ class EmailNews(commands.Cog):
         
         return chunks if chunks else [content[:max_length]]
 
-class EmailPaginationView(discord.ui.View):
-    """Pagination view for long email content."""
-    
-    def __init__(self, embeds: List[discord.Embed], timeout: float = 300):
-        super().__init__(timeout=timeout)
-        self.embeds = embeds
-        self.current_page = 0
-        self.max_pages = len(embeds)
-        
-        # Add numbered buttons for pages (up to 5 pages)
-        if self.max_pages <= 5:
-            for i in range(self.max_pages):
-                button = discord.ui.Button(
-                    label=str(i + 1),
-                    emoji=f"{i + 1}️⃣",
-                    style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary
-                )
-                button.callback = self.create_page_callback(i)
-                self.add_item(button)
-        else:
-            # For more than 5 pages, use previous/next buttons
-            self.add_item(self.previous_button)
-            self.add_item(self.next_button)
-    
-    def create_page_callback(self, page_num: int):
-        async def callback(interaction: discord.Interaction):
-            await self.go_to_page(interaction, page_num)
-        return callback
-    
-    async def go_to_page(self, interaction: discord.Interaction, page: int):
-        if 0 <= page < self.max_pages:
-            self.current_page = page
-            
-            # Update button styles for numbered buttons
-            if self.max_pages <= 5:
-                for i, item in enumerate(self.children):
-                    if isinstance(item, discord.ui.Button):
-                        item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
-            
-            await interaction.response.edit_message(embed=self.embeds[page], view=self)
-    
-    @discord.ui.button(label='Previous', style=discord.ButtonStyle.secondary, emoji='⬅️')
-    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page > 0:
-            await self.go_to_page(interaction, self.current_page - 1)
-        else:
-            await interaction.response.defer()
-    
-    @discord.ui.button(label='Next', style=discord.ButtonStyle.secondary, emoji='➡️')
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page < self.max_pages - 1:
-            await self.go_to_page(interaction, self.current_page + 1)
-        else:
-            await interaction.response.defer()
-    
-    async def on_timeout(self):
-        # Disable all buttons when the view times out
-        for item in self.children:
-            item.disabled = True
-
     def cog_unload(self):
         if self.email_check_task:
             self.email_check_task.cancel()
 
     async def initialize_encryption(self, guild_id: int) -> None:
-        """Initialize encryption key using guild ID as salt."""
+        """Initialize encryption key using guild ID as salt (optional)."""
         if not self.encryption_key:
             try:
                 tokens = await self.bot.get_shared_api_tokens("email_news")
                 if "secret" not in tokens:
-                    raise ValueError("Email news secret key not set. Use '!set api email_news secret,<your-secret-key>' to set it.")
+                    # No encryption key set - encryption is optional
+                    log.info("No encryption key set. Credentials will be stored in plain text. Use '!set api email_news secret,<your-secret-key>' to enable encryption.")
+                    self.encryption_key = None
+                    return
                 
                 salt = str(guild_id).encode()
                 kdf = PBKDF2HMAC(
@@ -227,20 +230,32 @@ class EmailPaginationView(discord.ui.View):
                 )
                 key = base64.urlsafe_b64encode(kdf.derive(tokens["secret"].encode()))
                 self.encryption_key = Fernet(key)
+                log.info("Encryption initialized successfully.")
             except Exception as e:
-                raise ValueError(f"Failed to initialize encryption: {str(e)}")
+                log.error(f"Failed to initialize encryption: {str(e)}")
+                self.encryption_key = None
 
     def encrypt_credentials(self, email: str, password: str) -> Dict[str, str]:
-        """Encrypt email credentials."""
-        encrypted_email = self.encryption_key.encrypt(email.encode()).decode()
-        encrypted_password = self.encryption_key.encrypt(password.encode()).decode()
-        return {"email": encrypted_email, "password": encrypted_password}
+        """Encrypt email credentials (if encryption is enabled)."""
+        if self.encryption_key:
+            encrypted_email = self.encryption_key.encrypt(email.encode()).decode()
+            encrypted_password = self.encryption_key.encrypt(password.encode()).decode()
+            return {"email": encrypted_email, "password": encrypted_password, "encrypted": True}
+        else:
+            # Store in plain text if no encryption key is set
+            return {"email": email, "password": password, "encrypted": False}
 
-    def decrypt_credentials(self, encrypted_data: Dict[str, str]) -> Dict[str, str]:
-        """Decrypt email credentials."""
-        email = self.encryption_key.decrypt(encrypted_data["email"].encode()).decode()
-        password = self.encryption_key.decrypt(encrypted_data["password"].encode()).decode()
-        return {"email": email, "password": password}
+    def decrypt_credentials(self, stored_data: Dict[str, str]) -> Dict[str, str]:
+        """Decrypt email credentials (if they were encrypted)."""
+        if stored_data.get("encrypted", True):  # Default to True for backward compatibility
+            if not self.encryption_key:
+                raise ValueError("Credentials are encrypted but no encryption key is available. Set encryption key with '!set api email_news secret,<your-secret-key>'")
+            email = self.encryption_key.decrypt(stored_data["email"].encode()).decode()
+            password = self.encryption_key.decrypt(stored_data["password"].encode()).decode()
+            return {"email": email, "password": password}
+        else:
+            # Credentials are stored in plain text
+            return {"email": stored_data["email"], "password": stored_data["password"]}
 
     @commands.group(name="emailnews")
     @commands.guild_only()

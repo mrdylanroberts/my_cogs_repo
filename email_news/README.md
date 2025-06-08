@@ -12,22 +12,14 @@ A secure cog that allows forwarding emails from specific senders to designated D
 
 ## Installation
 
-1. Add this repository to your bot (replace `<your_repo_name>` with a name you choose, e.g., `mycogs`, and `<your_github_username>` with your GitHub username):
+1. Add this repository to your bot:
 ```
-[p]repo add <your_repo_name> https://github.com/<your_github_username>/my_cogs_repo.git
-```
-   For example, if your GitHub username is `mrdylanroberts` and you want to name the repo `dylanscogs`:
-```
-[p]repo add dylanscogs https://github.com/mrdylanroberts/my_cogs_repo.git
+[p]repo add my_cogs_repo https://github.com/mrdylanroberts/my_cogs_repo.git
 ```
 
-2. Install the cog (use the repo name you chose above):
+2. Install the cog:
 ```
-[p]cog install <your_repo_name> email_news
-```
-   Example:
-```
-[p]cog install dylanscogs email_news
+[p]cog install my_cogs_repo email_news
 ```
 
 3. Load the cog:
@@ -35,15 +27,17 @@ A secure cog that allows forwarding emails from specific senders to designated D
 [p]load email_news
 ```
 
-## Initial Setup: Encryption Key
+## Initial Setup: Encryption Key (Optional but Recommended)
 
-Before using the cog, you **must** set up a secure **encryption key**. This key is used to encrypt your email account credentials, ensuring they are stored securely. **Choose a strong, unique secret key and keep it safe. You will need this key if you ever need to manually decrypt the credentials or move your bot installation.**
+For enhanced security, you can set up a secure **encryption key** to encrypt your email account credentials. This is **optional** but **highly recommended** for production use.
 
-Use the following command in Discord (replace `<your-secret-key>` with your chosen secret):
+**To enable encryption**, use the following command in Discord (replace `<your-secret-key>` with your chosen secret):
 ```
 [p]set api email_news secret,<your-secret-key>
 ```
-**Important:** There should be **no spaces** around the comma. This is a **mandatory one-time setup** for the cog to function securely.
+**Important:** There should be **no spaces** around the comma.
+
+**If you don't set an encryption key**, credentials will be stored in plain text in the bot's configuration. This is acceptable for testing but not recommended for production environments.
 
 ## Commands
 
@@ -53,7 +47,7 @@ Use the following command in Discord (replace `<your-secret-key>` with your chos
 [p]emailnews setup <email_address> <password_or_app_password>
 ```
 -   **Purpose:** Configures an email account for the cog to monitor.
--   **Security:** For your security, this command **must be used in a Direct Message (DM) with the bot**. This prevents your credentials from being visible in server channels. The bot will confirm success or failure in the DM.
+-   **Security:** This command automatically deletes your message containing credentials and sends confirmation via DM to protect your credentials.
 -   **Supported Accounts:** Primarily designed and tested with Gmail. For Gmail accounts with 2-Factor Authentication (2FA) enabled, you **must** use an [App Password](https://support.google.com/accounts/answer/185833). If 2FA is not enabled, you might need to enable "Less secure app access" (though using an App Password is more secure and recommended).
 
 ### Sender Management
