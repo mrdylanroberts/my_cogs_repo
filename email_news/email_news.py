@@ -5,6 +5,8 @@ import email as email_parser_module # Alias email to email_parser_module
 # email.utils is accessible via email_parser_module.utils
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
+import re
+import html
 
 import discord
 
@@ -54,6 +56,155 @@ class EmailNews(commands.Cog):
         ]
         
         self.config.register_guild(**default_guild)
+
+    def decode_mime_header(self, header_value: str) -> str:
+        """Decode MIME-encoded email headers like subjects."""
+        if not header_value:
+            return ""
+        
+        try:
+            decoded_parts = email_parser_module.header.decode_header(header_value)
+            decoded_string = ""
+            
+            for part, encoding in decoded_parts:
+                if isinstance(part, bytes):
+                    if encoding:
+                        decoded_string += part.decode(encoding, errors='replace')
+                    else:
+                        decoded_string += part.decode('utf-8', errors='replace')
+                else:
+                    decoded_string += str(part)
+            
+            return decoded_string.strip()
+        except Exception as e:
+            log.warning(f"Failed to decode MIME header '{header_value}': {e}")
+            return header_value
+
+    def extract_links_from_content(self, content: str) -> List[str]:
+        """Extract URLs from email content."""
+        # Pattern to match URLs
+        url_pattern = r'https?://[^\s\]\)]+'
+        urls = re.findall(url_pattern, content)
+        return urls
+
+    def clean_email_content(self, content: str) -> str:
+        """Clean and format email content for Discord."""
+        if not content:
+            return "No content available"
+        
+        # Remove excessive whitespace and normalize line breaks
+        content = re.sub(r'\n\s*\n\s*\n+', '\n\n', content)
+        content = re.sub(r'[ \t]+', ' ', content)
+        
+        # Remove common email artifacts
+        content = re.sub(r'‌+', '', content)  # Remove zero-width non-joiners
+        content = re.sub(r'\s*\[\d+\]\s*', ' ', content)  # Remove reference numbers like [1], [2]
+        
+        # Clean up excessive spacing
+        content = re.sub(r'\n{3,}', '\n\n', content)
+        content = content.strip()
+        
+        return content
+
+    def split_content_for_pagination(self, content: str, max_length: int = 1900) -> List[str]:
+        """Split content into chunks for pagination while preserving readability."""
+        if len(content) <= max_length:
+            return [content]
+        
+        chunks = []
+        current_chunk = ""
+        
+        # Split by paragraphs first
+        paragraphs = content.split('\n\n')
+        
+        for paragraph in paragraphs:
+            # If adding this paragraph would exceed the limit
+            if len(current_chunk) + len(paragraph) + 2 > max_length:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+                
+                # If the paragraph itself is too long, split it by sentences
+                if len(paragraph) > max_length:
+                    sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+                    for sentence in sentences:
+                        if len(current_chunk) + len(sentence) + 1 > max_length:
+                            if current_chunk:
+                                chunks.append(current_chunk.strip())
+                                current_chunk = ""
+                        current_chunk += sentence + " "
+                else:
+                    current_chunk = paragraph
+            else:
+                if current_chunk:
+                    current_chunk += "\n\n" + paragraph
+                else:
+                    current_chunk = paragraph
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        return chunks if chunks else [content[:max_length]]
+
+class EmailPaginationView(discord.ui.View):
+    """Pagination view for long email content."""
+    
+    def __init__(self, embeds: List[discord.Embed], timeout: float = 300):
+        super().__init__(timeout=timeout)
+        self.embeds = embeds
+        self.current_page = 0
+        self.max_pages = len(embeds)
+        
+        # Add numbered buttons for pages (up to 5 pages)
+        if self.max_pages <= 5:
+            for i in range(self.max_pages):
+                button = discord.ui.Button(
+                    label=str(i + 1),
+                    emoji=f"{i + 1}️⃣",
+                    style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary
+                )
+                button.callback = self.create_page_callback(i)
+                self.add_item(button)
+        else:
+            # For more than 5 pages, use previous/next buttons
+            self.add_item(self.previous_button)
+            self.add_item(self.next_button)
+    
+    def create_page_callback(self, page_num: int):
+        async def callback(interaction: discord.Interaction):
+            await self.go_to_page(interaction, page_num)
+        return callback
+    
+    async def go_to_page(self, interaction: discord.Interaction, page: int):
+        if 0 <= page < self.max_pages:
+            self.current_page = page
+            
+            # Update button styles for numbered buttons
+            if self.max_pages <= 5:
+                for i, item in enumerate(self.children):
+                    if isinstance(item, discord.ui.Button):
+                        item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
+            
+            await interaction.response.edit_message(embed=self.embeds[page], view=self)
+    
+    @discord.ui.button(label='Previous', style=discord.ButtonStyle.secondary, emoji='⬅️')
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page > 0:
+            await self.go_to_page(interaction, self.current_page - 1)
+        else:
+            await interaction.response.defer()
+    
+    @discord.ui.button(label='Next', style=discord.ButtonStyle.secondary, emoji='➡️')
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.current_page < self.max_pages - 1:
+            await self.go_to_page(interaction, self.current_page + 1)
+        else:
+            await interaction.response.defer()
+    
+    async def on_timeout(self):
+        # Disable all buttons when the view times out
+        for item in self.children:
+            item.disabled = True
 
     def cog_unload(self):
         if self.email_check_task:
@@ -358,9 +509,13 @@ class EmailNews(commands.Cog):
                             
                         from_address_raw = email_parser_module.utils.parseaddr(email_obj["From"])[1]
                         from_address = from_address_raw.lower()
-                        subject = email_obj["Subject"]
+                        
+                        # Decode MIME-encoded subject
+                        subject_raw = email_obj["Subject"]
+                        subject = self.decode_mime_header(subject_raw) if subject_raw else "No Subject"
+                        
                         date = email_obj["Date"]
-                        log.info(f"Email From (raw): {from_address_raw}, (lower): {from_address}, Subject: {subject}")
+                        log.info(f"Email From (raw): {from_address_raw}, (lower): {from_address}, Subject (decoded): {subject}")
                             
                         lowercase_filters = {k.lower(): v for k, v in filters.items()}
                         log.debug(f"Checking against lowercase filters: {list(lowercase_filters.keys())}")
@@ -387,16 +542,47 @@ class EmailNews(commands.Cog):
                                     except (UnicodeDecodeError, AttributeError):
                                         content = "Could not decode email content."
                                 
-                                embed = discord.Embed(
-                                    title=subject,
-                                    description=content[:2000] if content else "No content",
-                                    color=discord.Color.blue(),
-                                    timestamp=datetime.now(timezone.utc)
-                                )
-                                embed.add_field(name="From", value=from_address)
-                                embed.add_field(name="Date", value=date)
+                                # Clean and process the content
+                                cleaned_content = self.clean_email_content(content)
                                 
-                                await channel.send(embed=embed)
+                                # Extract links for reference
+                                links = self.extract_links_from_content(cleaned_content)
+                                
+                                # Split content into chunks for pagination
+                                content_chunks = self.split_content_for_pagination(cleaned_content)
+                                
+                                # Create embeds for each chunk
+                                embeds = []
+                                for i, chunk in enumerate(content_chunks):
+                                    embed = discord.Embed(
+                                        title=subject if i == 0 else f"{subject} (Page {i + 1})",
+                                        description=chunk,
+                                        color=discord.Color.blue(),
+                                        timestamp=datetime.now(timezone.utc)
+                                    )
+                                    
+                                    if i == 0:  # Add metadata only to first embed
+                                        embed.add_field(name="From", value=from_address, inline=True)
+                                        embed.add_field(name="Date", value=date, inline=True)
+                                        
+                                        # Add links if found (limit to first 5 to avoid embed limits)
+                                        if links:
+                                            link_text = "\n".join([f"[Link {j+1}]({link})" for j, link in enumerate(links[:5])])
+                                            if len(links) > 5:
+                                                link_text += f"\n... and {len(links) - 5} more links"
+                                            embed.add_field(name="Links", value=link_text, inline=False)
+                                    
+                                    if len(content_chunks) > 1:
+                                        embed.set_footer(text=f"Page {i + 1} of {len(content_chunks)}")
+                                    
+                                    embeds.append(embed)
+                                
+                                # Send the message with pagination if needed
+                                if len(embeds) == 1:
+                                    await channel.send(embed=embeds[0])
+                                else:
+                                    view = EmailPaginationView(embeds)
+                                    await channel.send(embed=embeds[0], view=view)
                                 
                                 await imap_client.store(num, "+FLAGS", "(\\Seen)")
 
