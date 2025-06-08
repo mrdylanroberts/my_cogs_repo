@@ -48,13 +48,40 @@ class EmailPaginationView(discord.ui.View):
                 self.add_item(button)
         else:
             # For more than 5 pages, use previous/next buttons
-            self.add_item(self.previous_button)
-            self.add_item(self.next_button)
+            prev_button = discord.ui.Button(
+                label='Previous',
+                style=discord.ButtonStyle.secondary,
+                emoji='⬅️',
+                custom_id='previous_btn'
+            )
+            prev_button.callback = self.previous_callback
+            self.add_item(prev_button)
+            
+            next_button = discord.ui.Button(
+                label='Next',
+                style=discord.ButtonStyle.secondary,
+                emoji='➡️',
+                custom_id='next_btn'
+            )
+            next_button.callback = self.next_callback
+            self.add_item(next_button)
     
     def create_page_callback(self, page_num: int):
         async def callback(interaction: discord.Interaction):
             await self.go_to_page(interaction, page_num)
         return callback
+    
+    async def previous_callback(self, interaction: discord.Interaction):
+        if self.current_page > 0:
+            await self.go_to_page(interaction, self.current_page - 1)
+        else:
+            await interaction.response.defer()
+    
+    async def next_callback(self, interaction: discord.Interaction):
+        if self.current_page < self.max_pages - 1:
+            await self.go_to_page(interaction, self.current_page + 1)
+        else:
+            await interaction.response.defer()
     
     async def go_to_page(self, interaction: discord.Interaction, page: int):
         if 0 <= page < self.max_pages:
@@ -67,20 +94,6 @@ class EmailPaginationView(discord.ui.View):
                         item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
             
             await interaction.response.edit_message(embed=self.embeds[page], view=self)
-    
-    @discord.ui.button(label='Previous', style=discord.ButtonStyle.secondary, emoji='⬅️', custom_id='previous_btn')
-    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page > 0:
-            await self.go_to_page(interaction, self.current_page - 1)
-        else:
-            await interaction.response.defer()
-    
-    @discord.ui.button(label='Next', style=discord.ButtonStyle.secondary, emoji='➡️', custom_id='next_btn')
-    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page < self.max_pages - 1:
-            await self.go_to_page(interaction, self.current_page + 1)
-        else:
-            await interaction.response.defer()
     
     async def on_timeout(self):
         # Disable all buttons when the view times out
