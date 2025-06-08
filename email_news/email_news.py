@@ -309,12 +309,14 @@ class EmailNews(commands.Cog):
                             log.error(f"Unexpected or empty msg_data for email {decoded_num_str}. Full msg_data: {str(msg_data)[:1000]}")
                             continue
 
-                        if len(msg_data) >= 2 and isinstance(msg_data[0], bytes) and isinstance(msg_data[1], bytes):
+                        # Handle flat list structure with bytes or bytearray
+                        if len(msg_data) >= 2 and isinstance(msg_data[0], bytes) and isinstance(msg_data[1], (bytes, bytearray)):
                             if b"RFC822" in msg_data[0]:
                                 log.debug(f"Detected flat list structure for {decoded_num_str}. msg_data[0]: {msg_data[0][:100]}, type(msg_data[1]): {type(msg_data[1])}")
                                 email_body = msg_data[1]
                         
-                        if email_body is None and isinstance(msg_data[0], tuple) and len(msg_data[0]) == 2 and isinstance(msg_data[0][1], bytes):
+                        # Handle tuple structure with bytes or bytearray
+                        if email_body is None and isinstance(msg_data[0], tuple) and len(msg_data[0]) == 2 and isinstance(msg_data[0][1], (bytes, bytearray)):
                             log.debug(f"Detected tuple structure for {decoded_num_str}. msg_data[0][0]: {str(msg_data[0][0])[:100]}, type(msg_data[0][1]): {type(msg_data[0][1])}")
                             email_body = msg_data[0][1]
 
@@ -328,6 +330,9 @@ class EmailNews(commands.Cog):
                         if isinstance(email_body, bytes):
                             email_body_bytes = email_body
                             log.debug(f"email_body for {decoded_num_str} is bytes. Length: {len(email_body_bytes)}")
+                        elif isinstance(email_body, bytearray):
+                            email_body_bytes = bytes(email_body)
+                            log.debug(f"email_body for {decoded_num_str} is bytearray. Converted to bytes. Length: {len(email_body_bytes)}")
                         elif isinstance(email_body, str):
                             log.warning(f"email_body for {decoded_num_str} is str. Converting to bytes. Value (first 200): {email_body[:200]}")
                             email_body_bytes = email_body.encode('utf-8', errors='replace')
