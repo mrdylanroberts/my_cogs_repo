@@ -27,10 +27,10 @@ log = logging.getLogger("red.my-cogs-repo.email_news") # Instantiate the logger
 # Default list of sender emails
 
 class EmailPaginationView(discord.ui.View):
-    """Pagination view for long email content."""
+    """Persistent pagination view for long email content."""
     
-    def __init__(self, embeds: List[discord.Embed], timeout: float = 300):
-        super().__init__(timeout=timeout)
+    def __init__(self, embeds: List[discord.Embed], timeout: float = None):
+        super().__init__(timeout=timeout)  # None = persistent view
         self.embeds = embeds
         self.current_page = 0
         self.max_pages = len(embeds)
@@ -42,7 +42,7 @@ class EmailPaginationView(discord.ui.View):
                     label=str(i + 1),
                     emoji=f"{i + 1}️⃣",
                     style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary,
-                    custom_id=f"page_{i}"
+                    custom_id=f"email_page_{i}_{id(self)}"
                 )
                 button.callback = self.create_page_callback(i)
                 self.add_item(button)
@@ -52,7 +52,7 @@ class EmailPaginationView(discord.ui.View):
                 label='Previous',
                 style=discord.ButtonStyle.secondary,
                 emoji='⬅️',
-                custom_id='previous_btn'
+                custom_id=f'email_previous_{id(self)}'
             )
             prev_button.callback = self.previous_callback
             self.add_item(prev_button)
@@ -61,44 +61,92 @@ class EmailPaginationView(discord.ui.View):
                 label='Next',
                 style=discord.ButtonStyle.secondary,
                 emoji='➡️',
-                custom_id='next_btn'
+                custom_id=f'email_next_{id(self)}'
             )
             next_button.callback = self.next_callback
             self.add_item(next_button)
     
     def create_page_callback(self, page_num: int):
         async def callback(interaction: discord.Interaction):
-            await self.go_to_page(interaction, page_num)
+            try:
+                await self.go_to_page(interaction, page_num)
+            except Exception as e:
+                log.error(f"Error in page callback for page {page_num}: {e}", exc_info=True)
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message("❌ An error occurred while changing pages.", ephemeral=True)
+                    else:
+                        await interaction.followup.send("❌ An error occurred while changing pages.", ephemeral=True)
+                except Exception:
+                    pass
         return callback
     
     async def previous_callback(self, interaction: discord.Interaction):
-        if self.current_page > 0:
-            await self.go_to_page(interaction, self.current_page - 1)
-        else:
-            await interaction.response.defer()
+        try:
+            if self.current_page > 0:
+                await self.go_to_page(interaction, self.current_page - 1)
+            else:
+                if not interaction.response.is_done():
+                    await interaction.response.defer()
+        except Exception as e:
+            log.error(f"Error in previous callback: {e}", exc_info=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred while navigating.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ An error occurred while navigating.", ephemeral=True)
+            except Exception:
+                pass
     
     async def next_callback(self, interaction: discord.Interaction):
-        if self.current_page < self.max_pages - 1:
-            await self.go_to_page(interaction, self.current_page + 1)
-        else:
-            await interaction.response.defer()
+        try:
+            if self.current_page < self.max_pages - 1:
+                await self.go_to_page(interaction, self.current_page + 1)
+            else:
+                if not interaction.response.is_done():
+                    await interaction.response.defer()
+        except Exception as e:
+            log.error(f"Error in next callback: {e}", exc_info=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred while navigating.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ An error occurred while navigating.", ephemeral=True)
+            except Exception:
+                pass
     
     async def go_to_page(self, interaction: discord.Interaction, page: int):
-        if 0 <= page < self.max_pages:
-            self.current_page = page
-            
-            # Update button styles for numbered buttons
-            if self.max_pages <= 5:
-                for i, item in enumerate(self.children):
-                    if isinstance(item, discord.ui.Button):
-                        item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
-            
-            await interaction.response.edit_message(embed=self.embeds[page], view=self)
+        try:
+            if 0 <= page < self.max_pages:
+                self.current_page = page
+                
+                # Update button styles for numbered buttons
+                if self.max_pages <= 5:
+                    for i, item in enumerate(self.children):
+                        if isinstance(item, discord.ui.Button) and item.custom_id and "email_page_" in item.custom_id:
+                            item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
+                
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=self.embeds[page], view=self)
+                else:
+                    await interaction.edit_original_response(embed=self.embeds[page], view=self)
+        except Exception as e:
+            log.error(f"Error in go_to_page for page {page}: {e}", exc_info=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred while changing pages.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ An error occurred while changing pages.", ephemeral=True)
+            except Exception:
+                pass
     
     async def on_timeout(self):
-        # Disable all buttons when the view times out
-        for item in self.children:
-            item.disabled = True
+        # This won't be called for persistent views (timeout=None)
+        try:
+            for item in self.children:
+                item.disabled = True
+        except Exception as e:
+            log.error(f"Error in on_timeout: {e}", exc_info=True)
 
 class EmailNews(commands.Cog):
     """Forward emails from specified senders to Discord channels securely."""
