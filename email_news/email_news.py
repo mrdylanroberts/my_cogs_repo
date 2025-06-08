@@ -41,7 +41,8 @@ class EmailPaginationView(discord.ui.View):
                 button = discord.ui.Button(
                     label=str(i + 1),
                     emoji=f"{i + 1}️⃣",
-                    style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary
+                    style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary,
+                    custom_id=f"page_{i}"
                 )
                 button.callback = self.create_page_callback(i)
                 self.add_item(button)
@@ -67,14 +68,14 @@ class EmailPaginationView(discord.ui.View):
             
             await interaction.response.edit_message(embed=self.embeds[page], view=self)
     
-    @discord.ui.button(label='Previous', style=discord.ButtonStyle.secondary, emoji='⬅️')
+    @discord.ui.button(label='Previous', style=discord.ButtonStyle.secondary, emoji='⬅️', custom_id='previous_btn')
     async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.current_page > 0:
             await self.go_to_page(interaction, self.current_page - 1)
         else:
             await interaction.response.defer()
     
-    @discord.ui.button(label='Next', style=discord.ButtonStyle.secondary, emoji='➡️')
+    @discord.ui.button(label='Next', style=discord.ButtonStyle.secondary, emoji='➡️', custom_id='next_btn')
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.current_page < self.max_pages - 1:
             await self.go_to_page(interaction, self.current_page + 1)
