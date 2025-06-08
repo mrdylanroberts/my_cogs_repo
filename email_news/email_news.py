@@ -451,8 +451,8 @@ class EmailNews(commands.Cog):
                 await imap_client.select("INBOX")
                 log.info("INBOX selected.")
 
-                log.info("Searching for all emails...")
-                status, messages = await imap_client.search("(ALL)")
+                log.info("Searching for unseen emails...")
+                status, messages = await imap_client.search("(UNSEEN)")
                 if status == 'OK':
                     message_numbers = messages[0].split()
                     log.info(f"IMAP search returned: {messages[0]}")
