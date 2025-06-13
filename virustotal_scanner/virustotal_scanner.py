@@ -43,6 +43,7 @@ class VirusTotalScanner(commands.Cog):
             "min_detections": 1,  # Minimum detections to show warning
             "delete_malicious": False,  # Auto-delete malicious content
             "notify_admins": True,  # Notify admins of malicious content
+            "admin_channel": None,  # Channel ID for admin notifications
             "scan_delay": 2,  # Delay between scans to respect rate limits
         }
         
@@ -230,6 +231,14 @@ class VirusTotalScanner(commands.Cog):
         else:
             api_key_status = "❌ Not set"
         
+        # Get admin channel info
+        admin_channel_id = await guild_config.admin_channel()
+        if admin_channel_id:
+            admin_channel = ctx.guild.get_channel(admin_channel_id)
+            admin_channel_status = f"✅ {admin_channel.mention}" if admin_channel else "❌ Channel not found"
+        else:
+            admin_channel_status = "📧 DM to server owner"
+        
         settings = {
             "API Key": api_key_status,
             "Auto Scan": "✅ Enabled" if await guild_config.auto_scan() else "❌ Disabled",
@@ -238,6 +247,7 @@ class VirusTotalScanner(commands.Cog):
             "Min Detections": await guild_config.min_detections(),
             "Delete Malicious": "✅ Yes" if await guild_config.delete_malicious() else "❌ No",
             "Notify Admins": "✅ Yes" if await guild_config.notify_admins() else "❌ No",
+            "Admin Channel": admin_channel_status,
         }
         
         embed = discord.Embed(
@@ -258,6 +268,29 @@ class VirusTotalScanner(commands.Cog):
             )
             
         await ctx.send(embed=embed)
+
+    @virustotal.command(name="adminchannel")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def set_admin_channel(self, ctx, channel: discord.TextChannel = None):
+        """Set the admin notification channel for security alerts.
+        
+        Usage:
+        - `!virustotal adminchannel #admin-logs` - Set admin channel
+        - `!virustotal adminchannel` - Clear admin channel (use DMs)
+        """
+        guild_config = self.config.guild(ctx.guild)
+        
+        if channel is None:
+            await guild_config.admin_channel.set(None)
+            await ctx.send("✅ Admin channel cleared. Notifications will be sent via DM to server owner.")
+        else:
+            # Check if bot has permission to send messages in the channel
+            if not channel.permissions_for(ctx.guild.me).send_messages:
+                await ctx.send(f"❌ I don't have permission to send messages in {channel.mention}.")
+                return
+                
+            await guild_config.admin_channel.set(channel.id)
+            await ctx.send(f"✅ Admin notifications will now be sent to {channel.mention}.")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -519,18 +552,32 @@ class VirusTotalScanner(commands.Cog):
             admin_embed.add_field(name="Detections", value=f"{positives}/{total}", inline=True)
             admin_embed.add_field(name="Message Link", value=f"[Jump to Message]({message.jump_url})", inline=False)
             
-            # Send to server owner or admins
-            try:
-                await message.guild.owner.send(embed=admin_embed)
-            except discord.HTTPException:
-                # If can't DM owner, try to find an admin channel
-                for channel in message.guild.text_channels:
-                    if 'admin' in channel.name.lower() or 'mod' in channel.name.lower():
-                        try:
-                            await channel.send(embed=admin_embed)
-                            break
-                        except discord.HTTPException:
-                            continue
+            # Send to configured admin channel or fallback to server owner
+            admin_channel_id = await guild_config.admin_channel()
+            notification_sent = False
+            
+            if admin_channel_id:
+                admin_channel = message.guild.get_channel(admin_channel_id)
+                if admin_channel:
+                    try:
+                        await admin_channel.send(embed=admin_embed)
+                        notification_sent = True
+                    except discord.HTTPException:
+                        pass  # Fall back to DM if channel send fails
+            
+            # Fallback to DM server owner if no admin channel or channel send failed
+            if not notification_sent:
+                try:
+                    await message.guild.owner.send(embed=admin_embed)
+                except discord.HTTPException:
+                    # If can't DM owner, try to find an admin channel as last resort
+                    for channel in message.guild.text_channels:
+                        if 'admin' in channel.name.lower() or 'mod' in channel.name.lower():
+                            try:
+                                await channel.send(embed=admin_embed)
+                                break
+                            except discord.HTTPException:
+                                continue
 
     async def scan_url_manual(self, ctx, url: str, api_key: str):
         """Manually scan a URL and return results."""
