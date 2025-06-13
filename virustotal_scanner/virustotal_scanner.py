@@ -9,6 +9,10 @@ from datetime import datetime, timezone
 import base64
 import time
 
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
 from redbot.core import commands, Config
 from redbot.core.bot import Red
 from redbot.core.utils.chat_formatting import box, humanize_number
@@ -27,9 +31,10 @@ class VirusTotalScanner(commands.Cog):
             identifier=123456789,
             force_registration=True
         )
+        self.encryption_key = None
         
         default_guild = {
-            "api_key": None,
+            "api_key_data": None,  # Encrypted API key data
             "auto_scan": True,
             "scan_urls": True,
             "scan_files": True,
@@ -70,6 +75,63 @@ class VirusTotalScanner(commands.Cog):
         """Stop scanning when cog unloads."""
         self.scanning = False
 
+    async def initialize_encryption(self, guild_id: int):
+        """Initialize encryption key using guild ID as salt (optional)."""
+        if not self.encryption_key:
+            try:
+                tokens = await self.bot.get_shared_api_tokens("virustotal_scanner")
+                if "secret" not in tokens:
+                    # No encryption key set - encryption is optional
+                    log.info("No encryption key set. API keys will be stored in plain text. Use '!set api virustotal_scanner secret,<your-secret-key>' to enable encryption.")
+                    self.encryption_key = None
+                    return
+                
+                salt = str(guild_id).encode()
+                kdf = PBKDF2HMAC(
+                    algorithm=hashes.SHA256(),
+                    length=32,
+                    salt=salt,
+                    iterations=100000,
+                )
+                key = base64.urlsafe_b64encode(kdf.derive(tokens["secret"].encode()))
+                self.encryption_key = Fernet(key)
+                log.info("Encryption initialized successfully.")
+            except Exception as e:
+                log.error(f"Failed to initialize encryption: {str(e)}")
+                self.encryption_key = None
+
+    def encrypt_api_key(self, api_key: str) -> Dict[str, str]:
+        """Encrypt API key (if encryption is enabled)."""
+        if self.encryption_key:
+            encrypted_key = self.encryption_key.encrypt(api_key.encode()).decode()
+            return {"api_key": encrypted_key, "encrypted": True}
+        else:
+            # Store in plain text if no encryption key is set
+            log.warning("Storing API key in plain text. Consider setting an encryption key for security.")
+            return {"api_key": api_key, "encrypted": False}
+
+    def decrypt_api_key(self, stored_data: Dict[str, str]) -> str:
+        """Decrypt API key (if it was encrypted)."""
+        if stored_data.get("encrypted", True):  # Default to True for backward compatibility
+            if not self.encryption_key:
+                raise ValueError("API key is encrypted but no encryption key is available. Set encryption key with '!set api virustotal_scanner secret,<your-secret-key>'")
+            return self.encryption_key.decrypt(stored_data["api_key"].encode()).decode()
+        else:
+            # API key is stored in plain text
+            return stored_data["api_key"]
+
+    async def get_api_key(self, guild) -> Optional[str]:
+        """Get and decrypt the API key for a guild."""
+        await self.initialize_encryption(guild.id)
+        api_key_data = await self.config.guild(guild).api_key_data()
+        if not api_key_data:
+            return None
+        try:
+            return self.decrypt_api_key(api_key_data)
+        except Exception as e:
+            log.error(f"Failed to decrypt API key for guild {guild.id}: {e}")
+            return None
+
     async def process_scan_queue(self):
         """Process the scan queue with rate limiting."""
         while self.scanning:
@@ -107,9 +169,19 @@ class VirusTotalScanner(commands.Cog):
                 "Usage: `!virustotal apikey YOUR_API_KEY`"
             )
             return
-            
-        await self.config.guild(ctx.guild).api_key.set(api_key)
-        await ctx.send("✅ VirusTotal API key has been set successfully!")
+        
+        # Initialize encryption for this guild
+        await self.initialize_encryption(ctx.guild.id)
+        
+        # Encrypt and store the API key
+        encrypted_data = self.encrypt_api_key(api_key)
+        await self.config.guild(ctx.guild).api_key_data.set(encrypted_data)
+        
+        # Inform about encryption status
+        if encrypted_data["encrypted"]:
+            await ctx.send("✅ VirusTotal API key has been encrypted and stored securely!")
+        else:
+            await ctx.send("✅ VirusTotal API key has been set successfully!\n⚠️ **Security Notice**: API key is stored in plain text. Consider setting an encryption key with `!set api virustotal_scanner secret,<your-secret-key>` for enhanced security.")
         
         # Delete the message containing the API key for security
         try:
@@ -132,7 +204,7 @@ class VirusTotalScanner(commands.Cog):
     @virustotal.command(name="scan")
     async def manual_scan(self, ctx, *, target: str):
         """Manually scan a URL or file hash."""
-        api_key = await self.config.guild(ctx.guild).api_key()
+        api_key = await self.get_api_key(ctx.guild)
         if not api_key:
             await ctx.send("❌ No VirusTotal API key configured. Use `!virustotal apikey` to set one.")
             return
@@ -148,8 +220,18 @@ class VirusTotalScanner(commands.Cog):
         """Show current VirusTotal scanner settings."""
         guild_config = self.config.guild(ctx.guild)
         
+        # Check API key status and encryption
+        api_key_data = await guild_config.api_key_data()
+        if api_key_data:
+            if api_key_data.get("encrypted", True):
+                api_key_status = "✅ Set (Encrypted)"
+            else:
+                api_key_status = "✅ Set (Plain Text)"
+        else:
+            api_key_status = "❌ Not set"
+        
         settings = {
-            "API Key": "✅ Set" if await guild_config.api_key() else "❌ Not set",
+            "API Key": api_key_status,
             "Auto Scan": "✅ Enabled" if await guild_config.auto_scan() else "❌ Disabled",
             "Scan URLs": "✅ Yes" if await guild_config.scan_urls() else "❌ No",
             "Scan Files": "✅ Yes" if await guild_config.scan_files() else "❌ No",
@@ -166,6 +248,14 @@ class VirusTotalScanner(commands.Cog):
         
         for setting, value in settings.items():
             embed.add_field(name=setting, value=value, inline=True)
+        
+        # Add security notice if not encrypted
+        if api_key_data and not api_key_data.get("encrypted", True):
+            embed.add_field(
+                name="🔒 Security Notice", 
+                value="Consider enabling encryption with `!set api virustotal_scanner secret,<your-secret-key>`", 
+                inline=False
+            )
             
         await ctx.send(embed=embed)
 
@@ -183,7 +273,7 @@ class VirusTotalScanner(commands.Cog):
             return
             
         # Check if API key is configured
-        api_key = await guild_config.api_key()
+        api_key = await self.get_api_key(message.guild)
         if not api_key:
             return
             

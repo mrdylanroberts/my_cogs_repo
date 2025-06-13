@@ -8,7 +8,8 @@
     "end_user_data_statement": "This cog stores VirusTotal API keys and configuration settings per guild. No personal user data is persistently stored.",
     "required_cogs": {},
     "requirements": [
-        "aiohttp>=3.8.0"
+        "aiohttp>=3.8.0",
+        "cryptography>=3.4.8"
     ],
     "tags": [
         "security",

@@ -34,7 +34,23 @@ A comprehensive Discord bot cog that automatically scans URLs and file attachmen
 [p]virustotal apikey YOUR_API_KEY_HERE
 ```
 
-**Note**: The message containing your API key will be automatically deleted for security.
+**Security Notes**: 
+- The message containing your API key will be automatically deleted for security
+- For enhanced security, set an encryption key: `[p]set api virustotal_scanner secret,<your-secret-key>`
+- Without encryption, API keys are stored in plain text (with warnings)
+
+### 4. Enable Encryption (Recommended)
+
+For maximum security in a cybersecurity course environment:
+
+```
+[p]set api virustotal_scanner secret,your-strong-secret-key-here
+```
+
+Then reconfigure your API key to encrypt it:
+```
+[p]virustotal apikey YOUR_API_KEY_HERE
+```
 
 ## Commands
 
@@ -94,20 +110,27 @@ The cog respects VirusTotal's free API limits:
 - Optional auto-deletion of malicious content
 - Admin notifications for security incidents
 
+## Security Features
 ### Privacy & Security
-- API keys are stored securely in bot config
-- Messages containing API keys are auto-deleted
-- No sensitive data is logged
+- **Encrypted API Key Storage**: API keys are encrypted using Fernet symmetric encryption with PBKDF2 key derivation
+- **Optional Encryption**: Encryption can be enabled by setting a secret key, otherwise keys are stored in plain text with warnings
+- **Automatic Message Deletion**: Messages containing API keys are auto-deleted for security
+- **No Sensitive Data Logging**: API keys and sensitive information are never logged
+- **Guild-Specific Encryption**: Each server uses its own encryption salt for enhanced security
+- **Secure Key Management**: Uses Red-DiscordBot's secure API token system for encryption keys
 - Respects Discord's file size limits (32MB max)
 
 ## Usage Examples
-
 ### Basic Setup
+
 ```
-# Set API key
+# Enable encryption (recommended for security courses)
+!set api virustotal_scanner secret,your-strong-secret-key
+
+# Set API key (will be encrypted if secret is set)
 !virustotal apikey vt_api_key_here
 
-# Check settings
+# Check settings (shows encryption status)
 !virustotal settings
 
 # Enable auto-scanning
@@ -125,6 +148,9 @@ The cog respects VirusTotal's free API limits:
 
 ### Advanced Configuration
 ```python
+# Security: Enable encryption for API keys
+[p]set api virustotal_scanner secret,your-encryption-key
+
 # These settings are stored in the bot's config system
 # and can be modified through the Red-DiscordBot config commands
 
@@ -192,6 +218,11 @@ This cog:
 - Sends URLs and file hashes to VirusTotal for analysis
 - Does not store or log message content
 - Automatically deletes API key messages
+- Encrypts API keys when encryption is enabled
+- Uses secure key derivation (PBKDF2) with guild-specific salts
 - Only processes public message content
+- Never logs sensitive information like API keys
+
+**For Cybersecurity Courses**: This cog implements industry-standard encryption practices suitable for educational environments where security is paramount.
 
 By using this cog, you acknowledge that URLs and files will be sent to VirusTotal's servers for analysis.
