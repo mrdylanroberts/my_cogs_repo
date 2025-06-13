@@ -1,0 +1,24 @@
+{
+    "author": [
+        "mrdylanroberts"
+    ],
+    "name": "VirusTotalScanner",
+    "short": "Automatically scan URLs and file attachments using VirusTotal API",
+    "description": "A comprehensive Discord bot cog that automatically scans URLs and file attachments using the VirusTotal API to detect malicious content and protect your server from scams and malware. Features real-time protection, configurable settings, and detailed threat reports.",
+    "end_user_data_statement": "This cog stores VirusTotal API keys and configuration settings per guild. No personal user data is persistently stored.",
+    "required_cogs": {},
+    "requirements": [
+        "aiohttp>=3.8.0"
+    ],
+    "tags": [
+        "security",
+        "malware",
+        "virustotal",
+        "scanning",
+        "protection"
+    ],
+    "min_bot_version": "3.5.0",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}
