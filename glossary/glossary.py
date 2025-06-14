@@ -21,6 +21,8 @@ class GlossaryView(discord.ui.View):
         self.per_page = per_page
         self.current_page = 0
         self.max_pages = (len(entries) - 1) // per_page + 1 if entries else 1
+        # Update button states after initialization
+        self.update_buttons()
         
     def get_page_embed(self) -> discord.Embed:
         """Generate embed for current page."""
@@ -52,18 +54,36 @@ class GlossaryView(discord.ui.View):
         embed.set_footer(text="Use the buttons below to navigate • Add terms with !glossary add")
         return embed
     
+    def update_buttons(self):
+        """Update button states and labels based on current page."""
+        # Update page indicator
+        for item in self.children:
+            if hasattr(item, 'label') and 'Page' in str(item.label):
+                item.label = f"Page {self.current_page + 1}/{self.max_pages}"
+            elif hasattr(item, 'label') and 'Previous' in str(item.label):
+                item.disabled = self.current_page == 0
+            elif hasattr(item, 'label') and 'Next' in str(item.label):
+                item.disabled = self.current_page >= self.max_pages - 1
+    
     @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary)
     async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.current_page > 0:
             self.current_page -= 1
+            self.update_buttons()
             await interaction.response.edit_message(embed=self.get_page_embed(), view=self)
         else:
             await interaction.response.defer()
+    
+    @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.primary, disabled=True)
+    async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # This button is just for display, no action needed
+        await interaction.response.defer()
     
     @discord.ui.button(label="▶️ Next", style=discord.ButtonStyle.secondary)
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.current_page < self.max_pages - 1:
             self.current_page += 1
+            self.update_buttons()
             await interaction.response.edit_message(embed=self.get_page_embed(), view=self)
         else:
             await interaction.response.defer()
