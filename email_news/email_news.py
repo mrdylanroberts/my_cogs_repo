@@ -270,18 +270,38 @@ class EmailNews(commands.Cog):
         if not content:
             return content
         
-        # Pattern to detect article titles with reading time
-        # This looks for text followed by (X minute read) or (X min read)
-        reading_time_pattern = r'([^\n]+?)\s*\((\d+)\s*min(?:ute)?\s*read\)'
+        # More precise pattern to capture just the article title, not the entire sentence
+        # This looks for capitalized text followed by (X minute read) or (X min read)
+        reading_time_pattern = r'([A-Z][^\n.!?]*?)\s*\((\d+)\s*min(?:ute)?\s*read\)'
         
         def enhance_reading_time(match):
             title = match.group(1).strip()
             minutes = match.group(2)
-            # Make the reading time more prominent with Discord formatting
+            # Only bold the title part, keep reading time in code block
             return f'**{title}** `({minutes} min read)`'
         
         # Apply the enhancement
         content = re.sub(reading_time_pattern, enhance_reading_time, content, flags=re.IGNORECASE)
+        
+        return content
+    
+    def convert_text_links_to_discord_format(self, content: str) -> str:
+        """Convert text with URLs in parentheses to Discord markdown links."""
+        if not content:
+            return content
+        
+        # Pattern to find text followed by URL in parentheses
+        # This handles the format: "text (https://example.com)"
+        link_pattern = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
+        
+        def convert_to_markdown_link(match):
+            text = match.group(1).strip()
+            url = match.group(2).strip()
+            # Convert to Discord markdown link format
+            return f'[{text}]({url})'
+        
+        # Apply the conversion
+        content = re.sub(link_pattern, convert_to_markdown_link, content)
         
         return content
     
@@ -709,6 +729,9 @@ class EmailNews(commands.Cog):
                                 
                                 # Enhance reading time indicators to make them more prominent
                                 content = self.enhance_reading_time_indicators(content)
+                                
+                                # Convert text links to clickable Discord format
+                                content = self.convert_text_links_to_discord_format(content)
                                 
                                 # Clean and process the content
                                 cleaned_content = self.clean_email_content(content)
