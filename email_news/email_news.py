@@ -219,12 +219,11 @@ class EmailNews(commands.Cog):
             html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
             html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
             
-            # Filter out unsubscribe and tracking links for security
+            # Filter out unsubscribe and dangerous tracking links for security
+            # But preserve reading time tracking links
             dangerous_patterns = [
                 r'unsubscribe',
                 r'manage.*subscription',
-                r'tracking\.',
-                r'click\..*\.com',
                 r'email.*forward',
                 r'opt.*out'
             ]
@@ -266,19 +265,25 @@ class EmailNews(commands.Cog):
             return html_content
 
     def enhance_reading_time_indicators(self, content: str) -> str:
-        """Enhance content by making reading time indicators more prominent and useful."""
+        """Enhance content by making reading time indicators clickable hyperlinks."""
         if not content:
             return content
         
-        # More precise pattern to capture just the article title, not the entire sentence
-        # This looks for capitalized text followed by (X minute read) or (X min read)
-        reading_time_pattern = r'([A-Z][^\n.!?]*?)\s*\((\d+)\s*min(?:ute)?\s*read\)'
+        # Pattern to find reading time indicators with potential tracking URLs
+        # This looks for text followed by (X min read) and optionally a URL
+        reading_time_pattern = r'([A-Z][^\n.!?]*?)\s*\((\d+)\s*min(?:ute)?\s*read\)(?:\s*([https?://][^\s)]+))?'
         
         def enhance_reading_time(match):
             title = match.group(1).strip()
             minutes = match.group(2)
-            # Only bold the title part, keep reading time in code block
-            return f'**{title}** `({minutes} min read)`'
+            url = match.group(3) if match.group(3) else None
+            
+            # If there's a URL, create a clickable link
+            if url:
+                return f'**{title}** [({minutes} min read)]({url})'
+            else:
+                # If no URL, just format as bold title with plain reading time
+                return f'**{title}** ({minutes} min read)'
         
         # Apply the enhancement
         content = re.sub(reading_time_pattern, enhance_reading_time, content, flags=re.IGNORECASE)
