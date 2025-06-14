@@ -333,31 +333,42 @@ class EmailNews(commands.Cog):
                     url = link.get('href')
                     text = link.get_text(strip=True)
                     
+                    # Debug logging
+                    log.debug(f"Processing link: {url[:100]}... with text: '{text}'")
+                    
                     # Extract real URL from tracking links
                     real_url = self.extract_real_url_from_tracking(url)
+                    log.debug(f"Extracted real URL: {real_url}")
                     
                     # Validate URL format
                     if not self.is_valid_url(real_url):
+                        log.debug(f"Invalid URL, replacing with text: {text}")
                         link.replace_with(text)
                         continue
                     
                     # Check if URL matches dangerous patterns
                     is_dangerous = any(re.search(pattern, real_url.lower()) for pattern in dangerous_patterns)
+                    log.debug(f"URL dangerous check: {is_dangerous}")
                     
                     # Special case: allow reading time links
                     if 'reading' in real_url.lower() and 'time' in real_url.lower():
                         is_dangerous = False
+                        log.debug("Reading time link allowed")
                     
                     if is_dangerous:
                         # Replace dangerous links with just the text
+                        log.debug(f"Dangerous link replaced with text: {text}")
                         link.replace_with(text)
                     else:
                         # Create Discord markdown links for better readability
-                        if text and text != url and len(text) < 100:
+                        if text and text != url and text != real_url and len(text) < 100:
                             # Use Discord markdown format for clickable links with real URL
-                            link.replace_with(f"[{text}]({real_url})")
+                            markdown_link = f"[{text}]({real_url})"
+                            log.debug(f"Created markdown link: {markdown_link}")
+                            link.replace_with(markdown_link)
                         else:
                             # For links without descriptive text, show the real URL
+                            log.debug(f"Replaced with real URL: {real_url}")
                             link.replace_with(real_url)
                 
                 # Get text content
