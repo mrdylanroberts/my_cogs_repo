@@ -740,20 +740,46 @@ class VirusTotalScanner(commands.Cog):
                         
                         async with session.post(self.vt_file_scan, data=form_data) as response:
                             if response.status == 200:
-                                # File submitted, wait and check for results
-                                await asyncio.sleep(10)
+                                scan_response = await response.json()
+                                log.debug(f"File scan submitted for {attachment.filename}: {scan_response}")
                                 
-                                # Try to get the report
-                                async with session.get(self.vt_file_report, params=report_params) as response:
-                                    if response.status == 200:
-                                        data = await response.json()
-                                        if data.get('response_code') == 1:
-                                            file_results.append((attachment, data))
+                                # File submitted, wait longer and retry multiple times
+                                max_retries = 6  # Try for up to 3 minutes
+                                retry_delay = 30  # Wait 30 seconds between retries
+                                
+                                for attempt in range(max_retries):
+                                    await asyncio.sleep(retry_delay)
+                                    
+                                    # Try to get the report
+                                    async with session.get(self.vt_file_report, params=report_params) as response:
+                                        if response.status == 200:
+                                            data = await response.json()
+                                            if data.get('response_code') == 1:
+                                                file_results.append((attachment, data))
+                                                log.debug(f"File scan completed for {attachment.filename} on attempt {attempt + 1}")
+                                                break
+                                            elif data.get('response_code') == -2:
+                                                # File is still being analyzed
+                                                log.debug(f"File {attachment.filename} still being analyzed, attempt {attempt + 1}/{max_retries}")
+                                                if attempt == max_retries - 1:
+                                                    log.warning(f"File {attachment.filename} still being analyzed after {max_retries} attempts")
+                                                    failed_files.append(attachment.filename)
+                                                continue
+                                            else:
+                                                log.warning(f"No report available for file {attachment.filename}")
+                                                failed_files.append(attachment.filename)
+                                                break
                                         else:
-                                            failed_files.append(attachment.filename)
-                                    else:
-                                        failed_files.append(attachment.filename)
+                                            log.warning(f"Failed to get file report for {attachment.filename}: HTTP {response.status}")
+                                            if attempt == max_retries - 1:
+                                                failed_files.append(attachment.filename)
+                            elif response.status == 204:
+                                # Rate limit hit
+                                log.warning(f"Rate limit hit while submitting file {attachment.filename}")
+                                await asyncio.sleep(60)  # Wait 1 minute for rate limit
+                                failed_files.append(attachment.filename)
                             else:
+                                log.error(f"Failed to submit file {attachment.filename} for scanning: HTTP {response.status}")
                                 failed_files.append(attachment.filename)
                 
                 except Exception as e:
