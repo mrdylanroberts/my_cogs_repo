@@ -88,6 +88,13 @@ class GlossaryView(discord.ui.View):
         else:
             await interaction.response.defer()
     
+    @discord.ui.button(label="➕ Add", style=discord.ButtonStyle.success)
+    async def add_term(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(
+            "Use `!glossary add <term> <definition>` to add new terms to the glossary!",
+            ephemeral=True
+        )
+    
     @discord.ui.button(label="🔍 Search", style=discord.ButtonStyle.primary)
     async def search_terms(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
