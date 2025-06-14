@@ -312,23 +312,32 @@ class EmailNews(commands.Cog):
                         # Replace dangerous links with just the text
                         link.replace_with(text)
                     else:
-                        # Keep safe links in a readable format
+                        # Create Discord markdown links for better readability
                         if text and text != url and len(text) < 100:
-                            link.replace_with(f"{text} ({url})")
+                            # Use Discord markdown format for clickable links
+                            link.replace_with(f"[{text}]({url})")
                         else:
+                            # For links without descriptive text, show the URL
                             link.replace_with(url)
                 
                 # Get text content
                 text = soup.get_text(separator='\n')
                 
-                # Clean up whitespace
+                # Clean up whitespace and add spacing between sections
                 lines = []
                 for line in text.split('\n'):
                     line = line.strip()
                     if line:
                         lines.append(line)
                 
+                # Join lines and add spacing between different content sections
                 result = '\n'.join(lines)
+                
+                # Add spacing around links for better readability
+                result = re.sub(r'(\[[^\]]+\]\([^\)]+\))', r'\n\1\n', result)
+                
+                # Clean up excessive newlines but preserve intentional spacing
+                result = re.sub(r'\n{3,}', '\n\n', result)
                 
                 # No final length limit applied
                 
@@ -370,7 +379,11 @@ class EmailNews(commands.Cog):
                         if is_dangerous:
                             return text
                         else:
-                            return f"{text} ({url})" if text and text != url else url
+                            # Use Discord markdown format for clickable links
+                            if text and text != url and len(text) < 100:
+                                return f"[{text}]({url})"
+                            else:
+                                return url
                     
                     return match.group(0)
                 
@@ -383,14 +396,21 @@ class EmailNews(commands.Cog):
                 # Decode HTML entities
                 text = html.unescape(text)
                 
-                # Clean up whitespace
+                # Clean up whitespace and add spacing between sections
                 lines = []
                 for line in text.split('\n'):
                     line = line.strip()
                     if line:
                         lines.append(line)
                 
+                # Join lines and add spacing between different content sections
                 result = '\n'.join(lines)
+                
+                # Add spacing around links for better readability
+                result = re.sub(r'(\[[^\]]+\]\([^\)]+\))', r'\n\1\n', result)
+                
+                # Clean up excessive newlines but preserve intentional spacing
+                result = re.sub(r'\n{3,}', '\n\n', result)
                 
                 # No final length limit applied
                 
@@ -995,10 +1015,7 @@ class EmailNews(commands.Cog):
                                     # Enhance reading time indicators
                                     content = self.enhance_reading_time_indicators(content)
                                     
-                                    # Convert text links to Discord format
-                                    content = self.convert_text_links_to_discord_format(content)
-                                    
-                                    # Clean the content
+                                    # Clean the content (links already converted to Discord format in HTML processing)
                                     content = self.clean_email_content(content)
                                     
                                     if not content.strip():
