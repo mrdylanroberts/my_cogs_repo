@@ -366,6 +366,9 @@ class EmailNews(commands.Cog):
                             text and 
                             not text.startswith(('http://', 'https://')) and
                             not text.startswith('www.') and
+                            text != url and  # Text is not the same as original URL
+                            text != real_url and  # Text is not the same as real URL
+                            not (url in text and len(text) > len(url) * 0.8) and  # Text doesn't mostly contain the URL
                             len(text) > 5 and  # Minimum meaningful length
                             len(text) < 150    # Maximum reasonable length
                         )
@@ -458,6 +461,9 @@ class EmailNews(commands.Cog):
                                 text and 
                                 not text.startswith(('http://', 'https://')) and
                                 not text.startswith('www.') and
+                                text != url and  # Text is not the same as original URL
+                                text != real_url and  # Text is not the same as real URL
+                                not (url in text and len(text) > len(url) * 0.8) and  # Text doesn't mostly contain the URL
                                 len(text) > 5 and  # Minimum meaningful length
                                 len(text) < 150    # Maximum reasonable length
                             )
