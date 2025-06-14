@@ -20,6 +20,12 @@ from redbot.core.bot import Red
 from redbot.core.data_manager import cog_data_path
 from redbot.core.utils.chat_formatting import box
 
+try:
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
+except ImportError:
+    HAS_BS4 = False
+
 import aiofiles
 from aioimaplib import aioimaplib
 from cryptography.fernet import Fernet
@@ -215,74 +221,191 @@ class EmailNews(commands.Cog):
             return ""
         
         try:
-            # Remove CSS styles and script tags completely
-            html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-            html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-            
-            # Filter out unsubscribe and dangerous tracking links for security
-            # But preserve reading time tracking links
-            dangerous_patterns = [
-                r'unsubscribe',
-                r'manage.*subscription',
-                r'email.*forward',
-                r'opt.*out'
-            ]
-            
-            # Remove dangerous links but preserve safe ones
-            def filter_link(match):
-                url = match.group(1)
-                text = match.group(2)
+            if HAS_BS4:
+                # Use BeautifulSoup for proper HTML parsing
+                soup = BeautifulSoup(html_content, 'html.parser')
                 
-                # Check if URL contains dangerous patterns
-                for pattern in dangerous_patterns:
-                    if re.search(pattern, url, re.IGNORECASE):
-                        return f"{text} [LINK REMOVED FOR SECURITY]"
+                # Remove script and style tags
+                for script in soup(["script", "style"]):
+                    script.decompose()
                 
-                # Check if this is a reading time link (contains tracking URL and reading time text)
-                if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                    # Keep the format that enhance_reading_time_indicators expects
-                    return f"{text} {url}"
+                # Remove hidden elements
+                for element in soup.find_all(style=True):
+                    style = element.get('style', '')
+                    if any(prop in style.lower() for prop in ['display:none', 'display: none', 'max-height:0', 'max-height: 0', 'overflow:hidden', 'overflow: hidden']):
+                        element.decompose()
                 
-                # Keep other safe links in standard format
-                return f"{text} ({url})"
-            
-            # Convert <a href="url">text</a> to text (url) with filtering
-            # Handle nested tags within links properly
-            def replace_link(match):
-                url = match.group(1)
-                inner_content = match.group(2)
+                # Filter out dangerous links
+                dangerous_patterns = [
+                    r'unsubscribe',
+                    r'manage.*subscription',
+                    r'email.*forward',
+                    r'opt.*out'
+                ]
                 
-                # Remove HTML tags from inner content
-                clean_text = re.sub(r'<[^>]+>', '', inner_content)
-                clean_text = html.unescape(clean_text.strip())
+                # Convert links to text format with filtering
+                for link in soup.find_all('a', href=True):
+                    url = link.get('href')
+                    text = link.get_text(strip=True)
+                    
+                    if text and url:
+                        # Check if URL contains dangerous patterns
+                        is_dangerous = any(re.search(pattern, url, re.IGNORECASE) for pattern in dangerous_patterns)
+                        
+                        if is_dangerous:
+                            link.replace_with(f"{text} [LINK REMOVED FOR SECURITY]")
+                        elif re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
+                            link.replace_with(f"{text} {url}")
+                        else:
+                            link.replace_with(f"{text} ({url})")
+                    else:
+                        link.decompose()
                 
-                # Apply filtering
-                fake_match = type('Match', (), {'group': lambda i: url if i == 1 else clean_text})()
-                return filter_link(fake_match)
+                # Add line breaks for table rows
+                for tr in soup.find_all('tr'):
+                    tr.append('\n')
+                
+                # Add spaces for table cells
+                for td in soup.find_all(['td', 'th']):
+                    td.append(' ')
+                
+                # Remove all table tags but keep content
+                for table_tag in soup.find_all(['table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th']):
+                    table_tag.unwrap()
+                
+                # Add line breaks for block elements
+                for block in soup.find_all(['div', 'p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                    if block.name == 'br':
+                        block.replace_with('\n')
+                    else:
+                        block.append('\n')
+                        block.unwrap()
+                
+                # Get clean text
+                text = soup.get_text()
+                
+                # Clean up whitespace
+                text = re.sub(r'\s+', ' ', text)  # Multiple spaces to single
+                text = re.sub(r'\n\s*\n', '\n\n', text)  # Clean paragraph breaks
+                text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 consecutive newlines
+                text = re.sub(r'^\s+|\s+$', '', text)  # Trim start/end whitespace
+                
+                # Remove zero-width non-joiners
+                text = text.replace('\u200c', '')
+                
+                return text.strip()
             
-            html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
-                                replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
-            
-            # Remove other HTML tags
-            html_content = re.sub(r'<[^>]+>', '', html_content)
-            
-            # Decode HTML entities
-            html_content = html.unescape(html_content)
-            
-            # Clean up extra whitespace while preserving structure
-            # First normalize line breaks
-            html_content = re.sub(r'\r\n|\r', '\n', html_content)
-            
-            # Remove CSS property patterns that might leak through
-            html_content = re.sub(r'[a-z-]+:\s*[^;]+;', '', html_content, flags=re.IGNORECASE)
-            html_content = re.sub(r'\{[^}]*\}', '', html_content)
-            
-            # Clean up excessive whitespace but preserve paragraph breaks
-            html_content = re.sub(r'[ \t]+', ' ', html_content)  # Multiple spaces/tabs to single space
-            html_content = re.sub(r'\n[ \t]*\n', '\n\n', html_content)  # Clean paragraph breaks
-            html_content = re.sub(r'\n{3,}', '\n\n', html_content)  # Max 2 consecutive newlines
-            
-            return html_content.strip()
+            else:
+                # Fallback to regex-based processing if BeautifulSoup is not available
+                # Remove CSS styles and script tags completely
+                html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+                html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+                
+                # Remove HTML comments
+                html_content = re.sub(r'<!--.*?-->', '', html_content, flags=re.DOTALL)
+                
+                # Remove DOCTYPE and HTML structure tags
+                html_content = re.sub(r'<!DOCTYPE[^>]*>', '', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'</?html[^>]*>', '', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'</?head[^>]*>', '', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'</?body[^>]*>', '', html_content, flags=re.IGNORECASE)
+                
+                # Remove meta tags and other head elements
+                html_content = re.sub(r'<meta[^>]*>', '', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'<title[^>]*>.*?</title>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+                
+                # Remove hidden content and email artifacts
+                html_content = re.sub(r'<div[^>]*display:\s*none[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+                html_content = re.sub(r'<div[^>]*max-height:\s*0[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+                html_content = re.sub(r'<div[^>]*overflow:\s*hidden[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+                
+                # Filter out unsubscribe and dangerous tracking links for security
+                # But preserve reading time tracking links
+                dangerous_patterns = [
+                    r'unsubscribe',
+                    r'manage.*subscription',
+                    r'email.*forward',
+                    r'opt.*out'
+                ]
+                
+                # Remove dangerous links but preserve safe ones
+                def filter_link(match):
+                    url = match.group(1)
+                    text = match.group(2)
+                    
+                    # Check if URL contains dangerous patterns
+                    for pattern in dangerous_patterns:
+                        if re.search(pattern, url, re.IGNORECASE):
+                            return f"{text} [LINK REMOVED FOR SECURITY]"
+                    
+                    # Check if this is a reading time link (contains tracking URL and reading time text)
+                    if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
+                        # Keep the format that enhance_reading_time_indicators expects
+                        return f"{text} {url}"
+                    
+                    # Keep other safe links in standard format
+                    return f"{text} ({url})"
+                
+                # Convert <a href="url">text</a> to text (url) with filtering
+                # Handle nested tags within links properly
+                def replace_link(match):
+                    url = match.group(1)
+                    inner_content = match.group(2)
+                    
+                    # Remove HTML tags from inner content
+                    clean_text = re.sub(r'<[^>]+>', '', inner_content)
+                    clean_text = html.unescape(clean_text.strip())
+                    
+                    # Apply filtering
+                    fake_match = type('Match', (), {'group': lambda i: url if i == 1 else clean_text})()
+                    return filter_link(fake_match)
+                
+                html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
+                                    replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
+                
+                # Handle table structures - convert to readable text
+                # First add line breaks after table rows for better readability
+                html_content = re.sub(r'</tr>', '\n', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'</td>', ' ', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'</th>', ' ', html_content, flags=re.IGNORECASE)
+                
+                # Remove all table structure tags completely
+                table_tags = ['table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th']
+                for tag in table_tags:
+                    html_content = re.sub(f'</?{tag}[^>]*>', '', html_content, flags=re.IGNORECASE)
+                
+                # Add line breaks for block elements
+                block_elements = ['div', 'p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+                for element in block_elements:
+                    html_content = re.sub(f'</?{element}[^>]*>', '\n', html_content, flags=re.IGNORECASE)
+                
+                # Remove all remaining HTML tags
+                html_content = re.sub(r'<[^>]+>', '', html_content)
+                
+                # Decode HTML entities
+                html_content = html.unescape(html_content)
+                
+                # Clean up extra whitespace while preserving structure
+                # First normalize line breaks
+                html_content = re.sub(r'\r\n|\r', '\n', html_content)
+                
+                # Remove CSS property patterns and inline styles that might leak through
+                html_content = re.sub(r'[a-z-]+:\s*[^;\n]+;?', '', html_content, flags=re.IGNORECASE)
+                html_content = re.sub(r'\{[^}]*\}', '', html_content)
+                html_content = re.sub(r'style="[^"]*"', '', html_content, flags=re.IGNORECASE)
+                
+                # Remove common email artifacts and metadata
+                html_content = re.sub(r'From\s+[^\n]*@[^\n]*', '', html_content)
+                html_content = re.sub(r'Date\s+[^\n]*', '', html_content)
+                html_content = re.sub(r'Page \d+ of \d+[^\n]*', '', html_content)
+                
+                # Clean up excessive whitespace but preserve paragraph breaks
+                html_content = re.sub(r'[ \t]+', ' ', html_content)  # Multiple spaces/tabs to single space
+                html_content = re.sub(r'\n[ \t]*\n', '\n\n', html_content)  # Clean paragraph breaks
+                html_content = re.sub(r'\n{3,}', '\n\n', html_content)  # Max 2 consecutive newlines
+                html_content = re.sub(r'^\s+|\s+$', '', html_content)  # Trim start/end whitespace
+                
+                return html_content.strip()
         except Exception as e:
             log.warning(f"Failed to convert HTML to text: {e}")
             return html_content
