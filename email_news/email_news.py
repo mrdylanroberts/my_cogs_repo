@@ -265,6 +265,26 @@ class EmailNews(commands.Cog):
             log.warning(f"Failed to convert HTML to text: {e}")
             return html_content
 
+    def enhance_reading_time_indicators(self, content: str) -> str:
+        """Enhance content by making reading time indicators more prominent and useful."""
+        if not content:
+            return content
+        
+        # Pattern to detect article titles with reading time
+        # This looks for text followed by (X minute read) or (X min read)
+        reading_time_pattern = r'([^\n]+?)\s*\((\d+)\s*min(?:ute)?\s*read\)'
+        
+        def enhance_reading_time(match):
+            title = match.group(1).strip()
+            minutes = match.group(2)
+            # Make the reading time more prominent with Discord formatting
+            return f'**{title}** `({minutes} min read)`'
+        
+        # Apply the enhancement
+        content = re.sub(reading_time_pattern, enhance_reading_time, content, flags=re.IGNORECASE)
+        
+        return content
+    
     def clean_email_content(self, content: str) -> str:
         """Clean and format email content for Discord while preserving inline links."""
         if not content:
@@ -686,6 +706,9 @@ class EmailNews(commands.Cog):
                                 # If we have HTML content, try to extract better formatted text with inline links
                                 if html_content and len(html_content.strip()) > len(content.strip()):
                                     content = self.convert_html_to_text_with_links(html_content)
+                                
+                                # Enhance reading time indicators to make them more prominent
+                                content = self.enhance_reading_time_indicators(content)
                                 
                                 # Clean and process the content
                                 cleaned_content = self.clean_email_content(content)
