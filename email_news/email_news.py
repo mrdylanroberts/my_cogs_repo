@@ -281,14 +281,12 @@ class EmailNews(commands.Cog):
                     if any(prop in style.lower() for prop in ['display:none', 'display: none', 'max-height:0', 'max-height: 0', 'overflow:hidden', 'overflow: hidden']):
                         element.decompose()
                 
-                # Filter out dangerous links - be more specific to avoid filtering legitimate content
+                # Filter out only unsubscribe and email management links
                 dangerous_patterns = [
                     r'unsubscribe',
                     r'manage.*subscription',
                     r'email.*forward',
                     r'opt.*out',
-                    r'web-version',
-                    r'view.*online',
                     r'email.*preferences',
                     r'update.*preferences'
                 ]
@@ -361,7 +359,7 @@ class EmailNews(commands.Cog):
                         
                         dangerous_patterns = [
                             r'unsubscribe', r'manage.*subscription', r'email.*forward', r'opt.*out',
-                            r'web-version', r'view.*online', r'email.*preferences', r'update.*preferences'
+                            r'email.*preferences', r'update.*preferences'
                         ]
                         
                         is_dangerous = any(re.search(pattern, url.lower()) for pattern in dangerous_patterns)
@@ -920,9 +918,10 @@ class EmailNews(commands.Cog):
                                     # Parse email
                                     msg = email.message_from_bytes(email_body)
                                     
-                                    # Extract sender and subject
+                                    # Extract sender, subject, and date
                                     sender = msg.get('From', '')
                                     subject = msg.get('Subject', '')
+                                    email_date = msg.get('Date', '')
                                     
                                     # Decode subject
                                     subject = self.decode_mime_header(subject)
@@ -1023,7 +1022,7 @@ class EmailNews(commands.Cog):
                                         
                                         if i == 0:  # Add metadata to first embed
                                             embed.add_field(name="From", value=sender_email, inline=True)
-                                            embed.add_field(name="Account", value=account_name, inline=True)
+                                            embed.add_field(name="Date", value=email_date if email_date else "Unknown", inline=True)
                                         
                                         if len(content_chunks) > 1:
                                             embed.set_footer(text=f"Page {i+1}/{len(content_chunks)}")
