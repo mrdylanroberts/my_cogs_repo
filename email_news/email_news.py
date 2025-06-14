@@ -259,6 +259,43 @@ class EmailNews(commands.Cog):
         urls = re.findall(url_pattern, content)
         return urls
     
+    def extract_real_url_from_tracking(self, tracking_url: str) -> str:
+        """Extract the real destination URL from tracking URLs."""
+        if not tracking_url:
+            return tracking_url
+        
+        # Common tracking URL patterns
+        patterns = [
+            # TLDR newsletter tracking: extract the actual URL
+            r'tracking\.tldrnewsletter\.com/CL0/([^/]+)',
+            # Other common tracking patterns
+            r'click\..*?\?.*?url=([^&]+)',
+            r'redirect\..*?\?.*?url=([^&]+)',
+            r'track\..*?\?.*?url=([^&]+)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, tracking_url, re.IGNORECASE)
+            if match:
+                encoded_url = match.group(1)
+                try:
+                    from urllib.parse import unquote
+                    # URL decode the extracted URL
+                    decoded_url = unquote(encoded_url)
+                    # Handle double encoding
+                    if decoded_url.startswith('https%3A') or decoded_url.startswith('http%3A'):
+                        decoded_url = unquote(decoded_url)
+                    
+                    # Validate the extracted URL
+                    from urllib.parse import urlparse
+                    parsed = urlparse(decoded_url)
+                    if parsed.scheme and parsed.netloc:
+                        return decoded_url
+                except:
+                    continue
+        
+        return tracking_url
+    
     def convert_html_to_text_with_links(self, html_content: str, max_length: Optional[int] = None) -> str:
         """Convert HTML content to text while preserving inline links and filtering dangerous links."""
         if not html_content:
@@ -296,16 +333,19 @@ class EmailNews(commands.Cog):
                     url = link.get('href')
                     text = link.get_text(strip=True)
                     
+                    # Extract real URL from tracking links
+                    real_url = self.extract_real_url_from_tracking(url)
+                    
                     # Validate URL format
-                    if not self.is_valid_url(url):
+                    if not self.is_valid_url(real_url):
                         link.replace_with(text)
                         continue
                     
                     # Check if URL matches dangerous patterns
-                    is_dangerous = any(re.search(pattern, url.lower()) for pattern in dangerous_patterns)
+                    is_dangerous = any(re.search(pattern, real_url.lower()) for pattern in dangerous_patterns)
                     
                     # Special case: allow reading time links
-                    if 'reading' in url.lower() and 'time' in url.lower():
+                    if 'reading' in real_url.lower() and 'time' in real_url.lower():
                         is_dangerous = False
                     
                     if is_dangerous:
@@ -314,11 +354,11 @@ class EmailNews(commands.Cog):
                     else:
                         # Create Discord markdown links for better readability
                         if text and text != url and len(text) < 100:
-                            # Use Discord markdown format for clickable links
-                            link.replace_with(f"[{text}]({url})")
+                            # Use Discord markdown format for clickable links with real URL
+                            link.replace_with(f"[{text}]({real_url})")
                         else:
-                            # For links without descriptive text, show the URL
-                            link.replace_with(url)
+                            # For links without descriptive text, show the real URL
+                            link.replace_with(real_url)
                 
                 # Get text content
                 text = soup.get_text(separator='\n')
