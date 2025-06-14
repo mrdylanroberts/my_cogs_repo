@@ -1,4 +1,3 @@
-import asyncio
 import email
 import html
 import imaplib
@@ -10,6 +9,9 @@ from email.header import decode_header
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 import re
+import socket
+import time
+import asyncio
 
 import discord
 from redbot.core import commands, Config, bot
@@ -79,8 +81,6 @@ class EmailPaginationView(discord.ui.View):
             )
             self.next_button.callback = self.next_callback
             self.add_item(self.next_button)
-    
-
     
     async def previous_callback(self, interaction: discord.Interaction):
         try:
@@ -173,6 +173,10 @@ class EmailNews(commands.Cog):
             "check_interval": 21600,  # 6 hours
             "last_check": None,  # Timestamp of last email check
             "default_channel_id": None, # Channel to send default sender emails to
+            "rate_limit_delay": 2,  # Delay between email processing in seconds
+            "connection_timeout": 30,  # IMAP connection timeout in seconds
+            "max_content_length": None,  # No content length limit
+            "max_emails_per_check": 50  # Maximum emails to process per check
         }
 
         self.DEFAULT_SENDERS_LIST = [
@@ -184,6 +188,46 @@ class EmailNews(commands.Cog):
         ]
         
         self.config.register_guild(**default_guild)
+        
+        # Rate limiting
+        self.last_email_process_time = {}
+        
+        # Connection pool for reuse
+        self.imap_connections = {}
+
+    def is_valid_email_format(self, email_str: str) -> bool:
+        """Validate email format."""
+        if not email_str:
+            return False
+        
+        # Extract email from "Name <email@domain.com>" format
+        email_match = re.search(r'<([^>]+)>', email_str)
+        if email_match:
+            email_str = email_match.group(1)
+        
+        # Basic email validation
+        email_pattern = re.compile(
+            r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        )
+        
+        return bool(email_pattern.match(email_str.strip()))
+
+    def is_valid_url(self, url: str) -> bool:
+        """Validate if a URL has proper format."""
+        if not url:
+            return False
+        
+        # Basic URL validation
+        url_pattern = re.compile(
+            r'^https?://'  # http:// or https://
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+'  # domain...
+            r'(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # host...
+            r'localhost|'  # localhost...
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+            r'(?::\d+)?'  # optional port
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+        
+        return bool(url_pattern.match(url))
 
     def decode_mime_header(self, header_value: str) -> str:
         """Decode MIME-encoded email headers like subjects."""
@@ -215,10 +259,12 @@ class EmailNews(commands.Cog):
         urls = re.findall(url_pattern, content)
         return urls
     
-    def convert_html_to_text_with_links(self, html_content: str) -> str:
+    def convert_html_to_text_with_links(self, html_content: str, max_length: Optional[int] = None) -> str:
         """Convert HTML content to text while preserving inline links and filtering dangerous links."""
         if not html_content:
             return ""
+        
+        # No early content length limit applied
         
         try:
             if HAS_BS4:
@@ -240,7 +286,21 @@ class EmailNews(commands.Cog):
                     r'unsubscribe',
                     r'manage.*subscription',
                     r'email.*forward',
-                    r'opt.*out'
+                    r'opt.*out',
+                    r'utm_',
+                    r'tracking',
+                    r'analytics',
+                    r'pixel',
+                    r'beacon',
+                    r'email.*track',
+                    r'open.*track',
+                    r'click.*track',
+                    r'mailtrack',
+                    r'emailtrack',
+                    r'bit\.ly',
+                    r'tinyurl',
+                    r'short',
+                    r'redirect'
                 ]
                 
                 # Convert links to text format with filtering
@@ -248,244 +308,174 @@ class EmailNews(commands.Cog):
                     url = link.get('href')
                     text = link.get_text(strip=True)
                     
-                    if text and url:
-                        # Check if URL contains dangerous patterns
-                        is_dangerous = any(re.search(pattern, url, re.IGNORECASE) for pattern in dangerous_patterns)
-                        
-                        if is_dangerous:
-                            link.replace_with(f"{text} [LINK REMOVED FOR SECURITY]")
-                        elif re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                            link.replace_with(f"{text} {url}")
-                        else:
-                            link.replace_with(f"{text} ({url})")
+                    # Validate URL format
+                    if not self.is_valid_url(url):
+                        link.replace_with(text)
+                        continue
+                    
+                    # Check if URL matches dangerous patterns
+                    is_dangerous = any(re.search(pattern, url.lower()) for pattern in dangerous_patterns)
+                    
+                    # Special case: allow reading time links
+                    if 'reading' in url.lower() and 'time' in url.lower():
+                        is_dangerous = False
+                    
+                    if is_dangerous:
+                        # Replace dangerous links with just the text
+                        link.replace_with(text)
                     else:
-                        link.decompose()
+                        # Keep safe links in a readable format
+                        if text and text != url and len(text) < 100:
+                            link.replace_with(f"{text} ({url})")
+                        else:
+                            link.replace_with(url)
                 
-                # Handle line breaks for block elements before removing tags
-                for br in soup.find_all('br'):
-                    br.replace_with('\n')
-                
-                # Add line breaks after table rows
-                for tr in soup.find_all('tr'):
-                    tr.insert_after('\n')
-                
-                # Add spaces after table cells
-                for td in soup.find_all(['td', 'th']):
-                    td.insert_after(' ')
-                
-                # Add line breaks after block elements
-                for block in soup.find_all(['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-                    block.insert_after('\n')
-                
-                # Get clean text (this automatically removes all HTML tags)
-                text = soup.get_text(separator=' ', strip=True)
+                # Get text content
+                text = soup.get_text(separator='\n')
                 
                 # Clean up whitespace
-                text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces/tabs to single space
-                text = re.sub(r'\n[ \t]*\n', '\n\n', text)  # Clean paragraph breaks
-                text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 consecutive newlines
-                text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # Trim start/end whitespace per line
+                lines = []
+                for line in text.split('\n'):
+                    line = line.strip()
+                    if line:
+                        lines.append(line)
                 
-                # Remove zero-width non-joiners and other invisible characters
-                text = text.replace('\u200c', '')
-                text = text.replace('\u200b', '')  # Zero-width space
-                text = text.replace('\ufeff', '')  # Byte order mark
+                result = '\n'.join(lines)
                 
-                return text.strip()
-            
+                # No final length limit applied
+                
+                return result
             else:
-                # Fallback to regex-based processing if BeautifulSoup is not available
-                # Remove CSS styles and script tags completely
-                html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-                html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+                # Fallback regex-based processing
+                log.warning("BeautifulSoup not available, using regex fallback")
+                
+                # Remove script and style tags
+                html_content = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
                 
                 # Remove HTML comments
                 html_content = re.sub(r'<!--.*?-->', '', html_content, flags=re.DOTALL)
                 
-                # Remove DOCTYPE and HTML structure tags
-                html_content = re.sub(r'<!DOCTYPE[^>]*>', '', html_content, flags=re.IGNORECASE)
-                html_content = re.sub(r'</?html[^>]*>', '', html_content, flags=re.IGNORECASE)
-                html_content = re.sub(r'</?head[^>]*>', '', html_content, flags=re.IGNORECASE)
-                html_content = re.sub(r'</?body[^>]*>', '', html_content, flags=re.IGNORECASE)
-                
-                # Remove meta tags and other head elements
-                html_content = re.sub(r'<meta[^>]*>', '', html_content, flags=re.IGNORECASE)
-                html_content = re.sub(r'<title[^>]*>.*?</title>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-                
-                # Remove hidden content and email artifacts
-                html_content = re.sub(r'<div[^>]*display:\s*none[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-                html_content = re.sub(r'<div[^>]*max-height:\s*0[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-                html_content = re.sub(r'<div[^>]*overflow:\s*hidden[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
-                
-                # Filter out unsubscribe and dangerous tracking links for security
-                # But preserve reading time tracking links
-                dangerous_patterns = [
-                    r'unsubscribe',
-                    r'manage.*subscription',
-                    r'email.*forward',
-                    r'opt.*out'
-                ]
-                
-                # Remove dangerous links but preserve safe ones
-                def filter_link(match):
-                    url = match.group(1)
-                    text = match.group(2)
-                    
-                    # Check if URL contains dangerous patterns
-                    for pattern in dangerous_patterns:
-                        if re.search(pattern, url, re.IGNORECASE):
-                            return f"{text} [LINK REMOVED FOR SECURITY]"
-                    
-                    # Check if this is a reading time link (contains tracking URL and reading time text)
-                    if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                        # Keep the format that enhance_reading_time_indicators expects
-                        return f"{text} {url}"
-                    
-                    # Keep other safe links in standard format
-                    return f"{text} ({url})"
-                
-                # Convert <a href="url">text</a> to text (url) with filtering
-                # Handle nested tags within links properly
+                # Process links
                 def replace_link(match):
-                    url = match.group(1)
-                    inner_content = match.group(2)
+                    full_tag = match.group(0)
+                    href_match = re.search(r'href=["\']([^"\'>]+)["\']', full_tag, re.IGNORECASE)
+                    text_match = re.search(r'>([^<]*)<', full_tag)
                     
-                    # Remove HTML tags from inner content
-                    clean_text = re.sub(r'<[^>]+>', '', inner_content)
-                    clean_text = html.unescape(clean_text.strip())
+                    if href_match:
+                        url = href_match.group(1)
+                        text = text_match.group(1).strip() if text_match else url
+                        
+                        # Validate URL and check for dangerous patterns
+                        if not self.is_valid_url(url):
+                            return text
+                        
+                        dangerous_patterns = [
+                            r'unsubscribe', r'manage.*subscription', r'email.*forward', r'opt.*out',
+                            r'utm_', r'tracking', r'analytics', r'pixel', r'beacon'
+                        ]
+                        
+                        is_dangerous = any(re.search(pattern, url.lower()) for pattern in dangerous_patterns)
+                        
+                        if 'reading' in url.lower() and 'time' in url.lower():
+                            is_dangerous = False
+                        
+                        if is_dangerous:
+                            return text
+                        else:
+                            return f"{text} ({url})" if text and text != url else url
                     
-                    # Apply filtering
-                    fake_match = type('Match', (), {'group': lambda i: url if i == 1 else clean_text})()
-                    return filter_link(fake_match)
+                    return match.group(0)
                 
-                html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
-                                    replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
+                # Replace links
+                html_content = re.sub(r'<a[^>]*>.*?</a>', replace_link, html_content, flags=re.DOTALL | re.IGNORECASE)
                 
-                # Handle table structures - convert to readable text
-                # First add line breaks after table rows for better readability
-                html_content = re.sub(r'</tr>', '\n', html_content, flags=re.IGNORECASE)
-                html_content = re.sub(r'</td>', ' ', html_content, flags=re.IGNORECASE)
-                html_content = re.sub(r'</th>', ' ', html_content, flags=re.IGNORECASE)
-                
-                # Remove all table structure tags completely
-                table_tags = ['table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th']
-                for tag in table_tags:
-                    html_content = re.sub(f'</?{tag}[^>]*>', '', html_content, flags=re.IGNORECASE)
-                
-                # Add line breaks for block elements
-                block_elements = ['div', 'p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
-                for element in block_elements:
-                    html_content = re.sub(f'</?{element}[^>]*>', '\n', html_content, flags=re.IGNORECASE)
-                
-                # Remove all remaining HTML tags
-                html_content = re.sub(r'<[^>]+>', '', html_content)
+                # Remove remaining HTML tags
+                text = re.sub(r'<[^>]+>', '', html_content)
                 
                 # Decode HTML entities
-                html_content = html.unescape(html_content)
+                text = html.unescape(text)
                 
-                # Clean up extra whitespace while preserving structure
-                # First normalize line breaks
-                html_content = re.sub(r'\r\n|\r', '\n', html_content)
+                # Clean up whitespace
+                lines = []
+                for line in text.split('\n'):
+                    line = line.strip()
+                    if line:
+                        lines.append(line)
                 
-                # Remove CSS property patterns and inline styles that might leak through
-                html_content = re.sub(r'[a-z-]+:\s*[^;\n]+;?', '', html_content, flags=re.IGNORECASE)
-                html_content = re.sub(r'\{[^}]*\}', '', html_content)
-                html_content = re.sub(r'style="[^"]*"', '', html_content, flags=re.IGNORECASE)
+                result = '\n'.join(lines)
                 
-                # Remove common email artifacts and metadata
-                html_content = re.sub(r'From\s+[^\n]*@[^\n]*', '', html_content)
-                html_content = re.sub(r'Date\s+[^\n]*', '', html_content)
-                html_content = re.sub(r'Page \d+ of \d+[^\n]*', '', html_content)
+                # No final length limit applied
                 
-                # Clean up excessive whitespace but preserve paragraph breaks
-                html_content = re.sub(r'[ \t]+', ' ', html_content)  # Multiple spaces/tabs to single space
-                html_content = re.sub(r'\n[ \t]*\n', '\n\n', html_content)  # Clean paragraph breaks
-                html_content = re.sub(r'\n{3,}', '\n\n', html_content)  # Max 2 consecutive newlines
-                html_content = re.sub(r'^\s+|\s+$', '', html_content)  # Trim start/end whitespace
+                return result
                 
-                return html_content.strip()
         except Exception as e:
-            log.warning(f"Failed to convert HTML to text: {e}")
-            return html_content
+            log.error(f"Error converting HTML to text: {e}")
+            # Emergency fallback: strip all HTML tags
+            text = re.sub(r'<[^>]+>', '', html_content)
+            text = html.unescape(text)
+            
+            if max_length and len(text) > max_length:
+                text = text[:max_length] + "..."
+            
+            return text
 
     def enhance_reading_time_indicators(self, content: str) -> str:
-        """Enhance content by making reading time indicators clickable hyperlinks."""
-        if not content:
-            return content
+        """Make reading time links more clickable and visible."""
+        # Pattern to match reading time indicators
+        reading_time_pattern = r'(\d+\s*(?:min|minute|minutes?)\s*read)\s*\(([^)]+)\)'
         
-        # Pattern to find reading time indicators with tracking URLs
-        # This looks for text with (X min read) followed by a tracking URL
-        reading_time_with_url_pattern = r'([^\n]*?)\s*\((\d+)\s*min(?:ute)?\s*read\)\s+(https?://tracking\.tldrnewsletter\.com[^\s]+)'
+        def replace_reading_time(match):
+            time_text = match.group(1)
+            url = match.group(2)
+            return f"📖 **{time_text}** - {url}"
         
-        def enhance_reading_time_with_url(match):
-            title = match.group(1).strip()
-            minutes = match.group(2)
-            url = match.group(3)
-            
-            # Create a clickable link with proper spacing
-            return f'\n\n**{title}** [({minutes} min read)]({url})\n'
-        
-        # Apply the enhancement for reading time links with URLs
-        content = re.sub(reading_time_with_url_pattern, enhance_reading_time_with_url, content, flags=re.IGNORECASE)
-        
-        # Pattern to find standalone reading time indicators without URLs
-        standalone_reading_time_pattern = r'([^\n]*?)\s*\((\d+)\s*min(?:ute)?\s*read\)(?!\s+https?)'
-        
-        def enhance_standalone_reading_time(match):
-            title = match.group(1).strip()
-            minutes = match.group(2)
-            
-            # Format as bold title with plain reading time and proper spacing
-            return f'\n\n**{title}** ({minutes} min read)\n'
-        
-        # Apply the enhancement for standalone reading time indicators
-        content = re.sub(standalone_reading_time_pattern, enhance_standalone_reading_time, content, flags=re.IGNORECASE)
-        
-        return content
-    
+        return re.sub(reading_time_pattern, replace_reading_time, content, flags=re.IGNORECASE)
+
     def convert_text_links_to_discord_format(self, content: str) -> str:
         """Convert text with URLs in parentheses to Discord markdown links."""
-        if not content:
-            return content
+        # Pattern to match "text (url)" format
+        link_pattern = r'([^\(\n]+)\s*\(\s*(https?://[^\s\)]+)\s*\)'
         
-        # Pattern to find text followed by URL in parentheses
-        # This handles the format: "text (https://example.com)"
-        link_pattern = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
-        
-        def convert_to_markdown_link(match):
+        def replace_link(match):
             text = match.group(1).strip()
             url = match.group(2).strip()
-            # Convert to Discord markdown link format
-            return f'[{text}]({url})'
+            
+            # Don't convert if text is too long or looks like a URL itself
+            if len(text) > 100 or text.startswith(('http://', 'https://')):
+                return f"{text} ({url})"
+            
+            return f"[{text}]({url})"
         
-        # Apply the conversion
-        content = re.sub(link_pattern, convert_to_markdown_link, content)
-        
-        return content
-    
+        return re.sub(link_pattern, replace_link, content)
+
     def clean_email_content(self, content: str) -> str:
-        """Clean and format email content for Discord while preserving inline links."""
+        """Clean email content by removing excessive whitespace and common email artifacts."""
         if not content:
-            return "No content available"
+            return ""
         
-        # Remove excessive whitespace and normalize line breaks
-        content = re.sub(r'\n\s*\n\s*\n+', '\n\n', content)
-        content = re.sub(r'[ \t]+', ' ', content)
+        # Remove excessive line breaks (more than 2 consecutive)
+        content = re.sub(r'\n{3,}', '\n\n', content)
         
         # Remove common email artifacts
-        content = re.sub(r'‌+', '', content)  # Remove zero-width non-joiners
+        artifacts = [
+            r'View this email in your browser.*?\n',
+            r'If you.*?unsubscribe.*?\n',
+            r'This email was sent to.*?\n',
+            r'You received this.*?\n',
+            r'\[\]\s*\n',  # Empty brackets
+            r'^\s*\n',  # Leading empty lines
+        ]
         
-        # DON'T remove reference numbers like [1], [2] as they may be linked to URLs
-        # Instead, preserve them to maintain link context
+        for artifact in artifacts:
+            content = re.sub(artifact, '', content, flags=re.IGNORECASE | re.MULTILINE)
         
-        # Clean up excessive spacing
-        content = re.sub(r'\n{3,}', '\n\n', content)
+        # Clean up whitespace
         content = content.strip()
         
         return content
 
-    def split_content_for_pagination(self, content: str, max_length: int = 1900) -> List[str]:
-        """Split content into chunks for pagination while preserving readability."""
+    def split_content_for_pagination(self, content: str, max_length: int = 2000) -> List[str]:
+        """Split content into chunks suitable for Discord embeds."""
         if len(content) <= max_length:
             return [content]
         
@@ -502,7 +492,7 @@ class EmailNews(commands.Cog):
                     chunks.append(current_chunk.strip())
                     current_chunk = ""
                 
-                # If the paragraph itself is too long, split it by sentences
+                # If the paragraph itself is too long, split by sentences
                 if len(paragraph) > max_length:
                     sentences = re.split(r'(?<=[.!?])\s+', paragraph)
                     for sentence in sentences:
@@ -510,457 +500,626 @@ class EmailNews(commands.Cog):
                             if current_chunk:
                                 chunks.append(current_chunk.strip())
                                 current_chunk = ""
-                        current_chunk += sentence + " "
+                        
+                        if len(sentence) > max_length:
+                            # Force split very long sentences
+                            while len(sentence) > max_length:
+                                chunks.append(sentence[:max_length].strip())
+                                sentence = sentence[max_length:]
+                            if sentence:
+                                current_chunk = sentence
+                        else:
+                            current_chunk += sentence + " "
                 else:
                     current_chunk = paragraph
             else:
-                if current_chunk:
-                    current_chunk += "\n\n" + paragraph
-                else:
-                    current_chunk = paragraph
+                current_chunk += paragraph + "\n\n"
         
         if current_chunk:
             chunks.append(current_chunk.strip())
         
         return chunks if chunks else [content[:max_length]]
 
-    def cog_unload(self):
+    async def cog_unload(self):
+        """Cancel the email checking task when the cog is unloaded."""
         if self.email_check_task:
             self.email_check_task.cancel()
 
-    async def initialize_encryption(self, guild_id: int) -> None:
-        """Initialize encryption key using guild ID as salt (optional)."""
-        if not self.encryption_key:
-            try:
-                tokens = await self.bot.get_shared_api_tokens("email_news")
-                if "secret" not in tokens:
-                    # No encryption key set - encryption is optional
-                    log.info("No encryption key set. Credentials will be stored in plain text. Use '!set api email_news secret,<your-secret-key>' to enable encryption.")
-                    self.encryption_key = None
-                    return
-                
-                salt = str(guild_id).encode()
-                kdf = PBKDF2HMAC(
-                    algorithm=hashes.SHA256(),
-                    length=32,
-                    salt=salt,
-                    iterations=100000,
-                )
-                key = base64.urlsafe_b64encode(kdf.derive(tokens["secret"].encode()))
-                self.encryption_key = Fernet(key)
-                log.info("Encryption initialized successfully.")
-            except Exception as e:
-                log.error(f"Failed to initialize encryption: {str(e)}")
+    async def initialize_encryption(self, guild_id: int):
+        """Initialize encryption for a guild using the guild ID as salt."""
+        try:
+            # Check if we have a secret key set
+            secret_key = await self.config.guild_from_id(guild_id).get_raw("secret_key", default=None)
+            
+            if not secret_key:
+                log.warning(f"No secret key set for guild {guild_id}. Use `!set api email_news secret,<your-secret-key>` to set one.")
                 self.encryption_key = None
+                return
+            
+            # Use guild ID as salt for key derivation
+            salt = str(guild_id).encode('utf-8')
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=salt,
+                iterations=100000,
+            )
+            key = base64.urlsafe_b64encode(kdf.derive(secret_key.encode('utf-8')))
+            self.encryption_key = Fernet(key)
+            
+        except Exception as e:
+            log.error(f"Failed to initialize encryption for guild {guild_id}: {e}")
+            self.encryption_key = None
 
-    def encrypt_credentials(self, email: str, password: str) -> Dict[str, str]:
-        """Encrypt email credentials (if encryption is enabled)."""
+    async def encrypt_credentials(self, guild_id: int, data: str) -> str:
+        """Encrypt credentials if encryption is available, otherwise return as-is."""
+        if not self.encryption_key:
+            await self.initialize_encryption(guild_id)
+        
+        if self.encryption_key and data:
+            try:
+                encrypted = self.encryption_key.encrypt(data.encode('utf-8'))
+                return base64.urlsafe_b64encode(encrypted).decode('utf-8')
+            except Exception as e:
+                log.error(f"Failed to encrypt data: {e}")
+        
+        return data
+
+    async def decrypt_credentials(self, guild_id: int, encrypted_data: str) -> str:
+        """Decrypt credentials if encryption is available, otherwise return as-is."""
+        if not encrypted_data:
+            return ""
+        
+        if not self.encryption_key:
+            await self.initialize_encryption(guild_id)
+        
         if self.encryption_key:
-            encrypted_email = self.encryption_key.encrypt(email.encode()).decode()
-            encrypted_password = self.encryption_key.encrypt(password.encode()).decode()
-            return {"email": encrypted_email, "password": encrypted_password, "encrypted": True}
-        else:
-            # Store in plain text if no encryption key is set
-            return {"email": email, "password": password, "encrypted": False}
-
-    def decrypt_credentials(self, stored_data: Dict[str, str]) -> Dict[str, str]:
-        """Decrypt email credentials (if they were encrypted)."""
-        if stored_data.get("encrypted", True):  # Default to True for backward compatibility
-            if not self.encryption_key:
-                raise ValueError("Credentials are encrypted but no encryption key is available. Set encryption key with '!set api email_news secret,<your-secret-key>'")
-            email = self.encryption_key.decrypt(stored_data["email"].encode()).decode()
-            password = self.encryption_key.decrypt(stored_data["password"].encode()).decode()
-            return {"email": email, "password": password}
-        else:
-            # Credentials are stored in plain text
-            return {"email": stored_data["email"], "password": stored_data["password"]}
+            try:
+                decoded = base64.urlsafe_b64decode(encrypted_data.encode('utf-8'))
+                decrypted = self.encryption_key.decrypt(decoded)
+                return decrypted.decode('utf-8')
+            except Exception as e:
+                log.debug(f"Failed to decrypt data (might be plain text): {e}")
+        
+        # Return as-is if decryption fails (might be plain text)
+        return encrypted_data
 
     @commands.group(name="emailnews")
     @commands.guild_only()
-    @commands.admin_or_permissions(administrator=True)
-    async def emailnews(self, ctx: commands.Context):
-        """Email news notification settings."""
+    async def emailnews(self, ctx):
+        """Email news forwarding commands."""
         pass
 
     @emailnews.command(name="setup")
-    async def setup_email(self, ctx: commands.Context, email: str, password: str):
-        """Set up email account credentials (use in DM for security)."""
-        if not ctx.guild:
-            await ctx.send("This command must be used in a server channel.")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def setup_email(self, ctx, account_name: str, email_address: str, password: str, imap_server: str = "imap.gmail.com"):
+        """Set up email account credentials (encrypted storage).
+        
+        Example: `!emailnews setup myaccount user@gmail.com mypassword imap.gmail.com`
+        
+        Note: Use app-specific passwords for Gmail.
+        """
+        # Validate email format
+        if not self.is_valid_email_format(email_address):
+            await ctx.send("❌ Invalid email address format.")
             return
-
-        if not ctx.author.dm_channel:
-            await ctx.author.create_dm()
-
-        # Delete the command message for security
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-
-        await self.initialize_encryption(ctx.guild.id)
         
         try:
-            # Test connection before saving
-            imap_client = aioimaplib.IMAP4_SSL("imap.gmail.com")
-            await imap_client.wait_hello_from_server()
-            await imap_client.login(email, password)
-            await imap_client.logout()
-
-            encrypted_creds = self.encrypt_credentials(email, password)
+            # Test the connection first
+            await ctx.send("🔄 Testing email connection...")
+            
+            # Set socket timeout for connection test
+            socket.setdefaulttimeout(30)
+            
+            try:
+                mail = imaplib.IMAP4_SSL(imap_server)
+                mail.login(email_address, password)
+                mail.select('INBOX')
+                mail.close()
+                mail.logout()
+            except socket.timeout:
+                await ctx.send("❌ Connection timeout. Please check your server settings.")
+                return
+            except imaplib.IMAP4.error as e:
+                await ctx.send(f"❌ IMAP connection failed: {e}")
+                return
+            finally:
+                socket.setdefaulttimeout(None)
+            
+            # Encrypt credentials
+            encrypted_email = await self.encrypt_credentials(ctx.guild.id, email_address)
+            encrypted_password = await self.encrypt_credentials(ctx.guild.id, password)
+            
+            # Store account info
             async with self.config.guild(ctx.guild).email_accounts() as accounts:
-                accounts[email] = encrypted_creds
-
-            await ctx.author.dm_channel.send("✅ Email account configured successfully! Use `!emailnews addsender` to set up email forwarding.")
+                accounts[account_name] = {
+                    "email": encrypted_email,
+                    "password": encrypted_password,
+                    "imap_server": imap_server
+                }
+            
+            await ctx.send(f"✅ Email account '{account_name}' configured successfully!")
+            log.info(f"Email account '{account_name}' configured for guild {ctx.guild.id}")
+            
         except Exception as e:
-            await ctx.author.dm_channel.send(f"❌ Failed to configure email account: {str(e)}")
+            await ctx.send(f"❌ Error setting up email account: {e}")
+            log.error(f"Error setting up email account: {e}")
 
     @emailnews.command(name="addsender")
-    async def add_sender(self, ctx: commands.Context, sender_email: str, channel: Optional[discord.TextChannel] = None):
-        """Add a sender email address to forward messages from."""
+    @commands.admin_or_permissions(manage_guild=True)
+    async def add_sender(self, ctx, sender_email: str, channel: discord.TextChannel = None):
+        """Add a sender email to forward to a specific channel.
+        
+        If no channel is specified, uses the default channel.
+        """
+        # Validate email format
+        if not self.is_valid_email_format(sender_email):
+            await ctx.send("❌ Invalid email address format.")
+            return
+        
         if not channel:
             default_channel_id = await self.config.guild(ctx.guild).default_channel_id()
-            if default_channel_id:
-                channel = ctx.guild.get_channel(default_channel_id)
-            if not channel: # Still no channel, use current or ask
-                channel = ctx.channel
-                await ctx.send(f"⚠️ No default channel set. Using current channel {channel.mention}. You can set a default with `!emailnews setdefaultchannel`.")
+            if not default_channel_id:
+                await ctx.send("❌ No channel specified and no default channel set. Use `!emailnews setdefaultchannel` first.")
+                return
+            channel = ctx.guild.get_channel(default_channel_id)
+            if not channel:
+                await ctx.send("❌ Default channel not found. Please set a new default channel.")
+                return
         
         async with self.config.guild(ctx.guild).sender_filters() as filters:
             filters[sender_email] = channel.id
         
-        await ctx.send(f"✅ Messages from {sender_email} will be forwarded to {channel.mention}")
+        await ctx.send(f"✅ Added sender `{sender_email}` → {channel.mention}")
+        log.info(f"Added sender filter: {sender_email} -> {channel.id} for guild {ctx.guild.id}")
 
     @emailnews.command(name="setdefaultchannel")
-    async def set_default_channel(self, ctx: commands.Context, channel: discord.TextChannel):
-        """Sets the default channel for new sender filters if not specified."""
+    @commands.admin_or_permissions(manage_guild=True)
+    async def set_default_channel(self, ctx, channel: discord.TextChannel):
+        """Set the default channel for sender filters."""
         await self.config.guild(ctx.guild).default_channel_id.set(channel.id)
-        await ctx.send(f"✅ Default channel for sender filters set to {channel.mention}.")
+        await ctx.send(f"✅ Default channel set to {channel.mention}")
+        log.info(f"Default channel set to {channel.id} for guild {ctx.guild.id}")
 
     @emailnews.command(name="loaddefaults")
-    async def load_default_senders(self, ctx: commands.Context, target_channel: Optional[discord.TextChannel] = None):
-        """Loads a predefined list of common newsletter senders."""
-        if not target_channel:
+    @commands.admin_or_permissions(manage_guild=True)
+    async def load_default_senders(self, ctx, channel: discord.TextChannel = None):
+        """Load the default list of security newsletter senders."""
+        if not channel:
             default_channel_id = await self.config.guild(ctx.guild).default_channel_id()
-            if default_channel_id:
-                target_channel = ctx.guild.get_channel(default_channel_id)
-            if not target_channel: # Still no channel, use current or error
-                target_channel = ctx.channel
-                await ctx.send(f"⚠️ No default channel set. Using current channel {target_channel.mention} for these defaults. You can set a default with `!emailnews setdefaultchannel`.")
-
-        if not target_channel:
-            await ctx.send("❌ Could not determine a target channel. Please specify one or set a default channel.")
-            return
-
-        added_count = 0
+            if not default_channel_id:
+                await ctx.send("❌ No channel specified and no default channel set.")
+                return
+            channel = ctx.guild.get_channel(default_channel_id)
+            if not channel:
+                await ctx.send("❌ Default channel not found.")
+                return
+        
         async with self.config.guild(ctx.guild).sender_filters() as filters:
             for sender in self.DEFAULT_SENDERS_LIST:
-                if sender not in filters:
-                    filters[sender] = target_channel.id
-                    added_count += 1
+                filters[sender] = channel.id
         
-        if added_count > 0:
-            await ctx.send(f"✅ Added {added_count} default sender(s) to forward to {target_channel.mention}.")
-        else:
-            await ctx.send("✅ All default senders are already in your filter list for this server.")
+        sender_list = "\n".join([f"• {sender}" for sender in self.DEFAULT_SENDERS_LIST])
+        await ctx.send(f"✅ Loaded {len(self.DEFAULT_SENDERS_LIST)} default senders to {channel.mention}:\n```\n{sender_list}\n```")
+        log.info(f"Loaded default senders for guild {ctx.guild.id}")
 
     @emailnews.command(name="removesender")
-    async def remove_sender(self, ctx: commands.Context, sender_email: str):
-        """Remove a sender email address from forwarding."""
+    @commands.admin_or_permissions(manage_guild=True)
+    async def remove_sender(self, ctx, sender_email: str):
+        """Remove a sender from the filter list."""
         async with self.config.guild(ctx.guild).sender_filters() as filters:
             if sender_email in filters:
                 del filters[sender_email]
-                await ctx.send(f"✅ Removed {sender_email} from forwarding list.")
+                await ctx.send(f"✅ Removed sender `{sender_email}`")
+                log.info(f"Removed sender filter: {sender_email} for guild {ctx.guild.id}")
             else:
-                await ctx.send("❌ Sender email not found in forwarding list.")
+                await ctx.send(f"❌ Sender `{sender_email}` not found in filters.")
 
     @emailnews.command(name="listsenders")
-    async def list_senders(self, ctx: commands.Context):
+    @commands.admin_or_permissions(manage_guild=True)
+    async def list_senders(self, ctx):
         """List all configured sender filters."""
         filters = await self.config.guild(ctx.guild).sender_filters()
+        
         if not filters:
             await ctx.send("No sender filters configured.")
             return
-
-        output = ["Configured Sender Filters:"]
+        
+        embed = discord.Embed(title="Configured Sender Filters", color=0x00ff00)
+        
         for sender, channel_id in filters.items():
             channel = ctx.guild.get_channel(channel_id)
-            channel_mention = channel.mention if channel else "[Deleted Channel]"
-            output.append(f"• {sender} → {channel_mention}")
-
-        await ctx.send(box("\n".join(output)))
+            channel_name = channel.mention if channel else f"<#{channel_id}> (deleted)"
+            embed.add_field(name=sender, value=channel_name, inline=False)
+        
+        await ctx.send(embed=embed)
 
     @emailnews.command(name="checknow")
-    async def check_now(self, ctx: commands.Context):
-        """Manually check for new emails and forward them."""
-        if not ctx.guild:
-            await ctx.send("This command must be used in a server channel.")
-            return
-
-        await ctx.send("⏳ Manually triggering email check...")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def check_now(self, ctx):
+        """Manually trigger an email check."""
+        await ctx.send("🔄 Checking emails...")
+        
         try:
-            processed_count = await self.check_emails(ctx.guild, manual_trigger=True)
-            if processed_count > 0:
-                await ctx.send(f"✅ Email check manually triggered. Processed {processed_count} new email(s).")
-            else:
-                await ctx.send("✅ Email check manually triggered. No new emails found or processed.")
+            await self.check_emails_for_guild(ctx.guild.id)
+            await ctx.send("✅ Email check completed.")
         except Exception as e:
-            await ctx.send(f"❌ An error occurred during manual email check: {str(e)}")
+            await ctx.send(f"❌ Error during email check: {e}")
+            log.error(f"Manual email check error for guild {ctx.guild.id}: {e}")
 
-    @emailnews.command(name="interval")
-    async def set_interval(self, ctx: commands.Context, seconds: int):
-        """Set how often to check for new emails (in seconds, minimum 3600)."""
-        if seconds < 3600:
-            await ctx.send("❌ Interval must be at least 1 hour (3600 seconds) to prevent rate limiting.")
+    @emailnews.command(name="setinterval")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def set_interval(self, ctx, hours: int):
+        """Set the email check interval in hours (minimum 1 hour)."""
+        if hours < 1:
+            await ctx.send("❌ Minimum interval is 1 hour.")
             return
-
-        await self.config.guild(ctx.guild).check_interval.set(seconds)
-        human_readable = f"{seconds//3600} hours" if seconds >= 3600 else f"{seconds//60} minutes"
-        await ctx.send(f"✅ Email check interval set to {human_readable}.")
-
-    async def check_emails(self, guild, manual_trigger=False):
-        """Check for new emails and forward them to appropriate channels."""
-        log.info(f"Starting email check for guild: {guild.name} ({guild.id})")
-        # Check if enough time has passed since last check, unless manually triggered
-        if not manual_trigger:
-            last_check = await self.config.guild(guild).last_check()
-            check_interval = await self.config.guild(guild).check_interval()
-            log.info(f"Last check: {last_check}, Interval: {check_interval}")
-            
-            if last_check is not None:
-                now = datetime.now(timezone.utc).timestamp()
-                time_since_last_check = now - last_check
-                log.info(f"Time since last check: {time_since_last_check} seconds")
-                
-                if time_since_last_check < check_interval:
-                    log.info("Interval not elapsed. Skipping check.")
-                    return 0 # Skip check if interval hasn't elapsed
-            
-            # Update last check timestamp only for automated checks
-            await self.config.guild(guild).last_check.set(datetime.now(timezone.utc).timestamp())
-            log.info("Updated last_check timestamp.")
         
-        await self.initialize_encryption(guild.id)
+        interval_seconds = hours * 3600
+        await self.config.guild(ctx.guild).check_interval.set(interval_seconds)
+        await ctx.send(f"✅ Email check interval set to {hours} hour(s).")
+        log.info(f"Email check interval set to {hours} hours for guild {ctx.guild.id}")
+
+    @emailnews.command(name="config")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def show_config(self, ctx):
+        """Show current email news configuration."""
+        guild_config = self.config.guild(ctx.guild)
         
-        accounts = await self.config.guild(guild).email_accounts()
-        filters = await self.config.guild(guild).sender_filters()
-        log.info(f"Found {len(accounts)} email account(s) and {len(filters)} sender filter(s).")
-        processed_email_count = 0
+        check_interval = await guild_config.check_interval()
+        rate_limit_delay = await guild_config.rate_limit_delay()
+        connection_timeout = await guild_config.connection_timeout()
 
-        for email_account_address, encrypted_data in accounts.items(): # Renamed 'email' to 'email_account_address' to avoid confusion
-            try:
-                creds = self.decrypt_credentials(encrypted_data)
-                imap_client = aioimaplib.IMAP4_SSL("imap.gmail.com")
-                await imap_client.wait_hello_from_server()
-                log.info(f"Logging into: {creds['email']}")
-                login_status, login_data = await imap_client.login(creds["email"], creds["password"])
-                log.info(f"Login attempt status: {login_status}, data: {login_data}")
+        max_emails_per_check = await guild_config.max_emails_per_check()
+        
+        embed = discord.Embed(
+            title="Email News Configuration",
+            color=0x00ff00
+        )
+        
+        embed.add_field(
+            name="Check Interval",
+            value=f"{check_interval} seconds ({check_interval//3600}h {(check_interval%3600)//60}m)",
+            inline=True
+        )
+        embed.add_field(
+            name="Rate Limit Delay",
+            value=f"{rate_limit_delay} seconds",
+            inline=True
+        )
+        embed.add_field(
+            name="Connection Timeout",
+            value=f"{connection_timeout} seconds",
+            inline=True
+        )
 
-                if login_status != 'OK':
-                    log.error(f"Login failed for {creds['email']}. Status: {login_status}, Reason: {login_data}")
-                    try:
-                        await imap_client.logout()
-                        log.info(f"Logged out (after failed login attempt) from {creds['email']}.")
-                    except Exception as logout_err:
-                        log.error(f"Error during logout after failed login for {creds['email']}: {logout_err}")
-                    continue # Skip to the next account
+        embed.add_field(
+            name="Max Emails Per Check",
+            value=str(max_emails_per_check),
+            inline=True
+        )
+        
+        await ctx.send(embed=embed)
 
-                log.info(f"Logged in successfully. Selecting INBOX.")
-                await imap_client.select("INBOX")
-                log.info("INBOX selected.")
+    @emailnews.command(name="setconfig")
+    @commands.admin_or_permissions(manage_guild=True)
+    async def set_config(self, ctx, setting: str, value: int):
+        """Set configuration values. Available settings: rate_limit_delay, connection_timeout, max_emails_per_check"""
+        guild_config = self.config.guild(ctx.guild)
+        
+        valid_settings = {
+            'rate_limit_delay': (0, 60),
+            'connection_timeout': (10, 300),
+            'max_emails_per_check': (1, 200)
+        }
+        
+        if setting not in valid_settings:
+            await ctx.send(f"❌ Invalid setting. Valid options: {', '.join(valid_settings.keys())}")
+            return
+        
+        min_val, max_val = valid_settings[setting]
+        if not min_val <= value <= max_val:
+            await ctx.send(f"❌ Value must be between {min_val} and {max_val}")
+            return
+        
+        await getattr(guild_config, setting).set(value)
+        await ctx.send(f"✅ {setting} set to {value}")
+        
+        log.info(f"{setting} set to {value} for guild {ctx.guild.id}")
 
-                log.info("Searching for unseen emails...")
-                status, messages = await imap_client.search("(UNSEEN)")
-                if status == 'OK':
-                    message_numbers = messages[0].split()
-                    log.info(f"IMAP search returned: {messages[0]}")
-                    log.info(f"Found {len(message_numbers)} email(s).")
-                else:
-                    log.error(f"IMAP search failed with status: {status}. Response: {messages}")
-                    message_numbers = []
+    async def check_emails_for_guild(self, guild_id: int):
+        """Check emails for a specific guild with enhanced error handling and rate limiting."""
+        try:
+            guild_config = self.config.guild_from_id(guild_id)
+            
+            # Get configuration
+            email_accounts = await guild_config.email_accounts()
+            sender_filters = await guild_config.sender_filters()
+            rate_limit_delay = await guild_config.rate_limit_delay()
+            connection_timeout = await guild_config.connection_timeout()
 
-                for num in message_numbers:
-                    try:
-                        # Fetch the email by its ID
-                        decoded_num_str = num.decode('utf-8')
-                        typ, msg_data = await imap_client.fetch(decoded_num_str, '(RFC822)')
-                        
-                        log.debug(f"Full msg_data for {decoded_num_str}: {str(msg_data)[:1000]}...") # Log first 1000 chars
-                        log.debug(f"Type of msg_data: {type(msg_data)}")
-                        email_body = None 
-
-                        if not msg_data or not isinstance(msg_data, list) or len(msg_data) == 0:
-                            log.error(f"Unexpected or empty msg_data for email {decoded_num_str}. Full msg_data: {str(msg_data)[:1000]}")
-                            continue
-
-                        # Handle flat list structure with bytes or bytearray
-                        if len(msg_data) >= 2 and isinstance(msg_data[0], bytes) and isinstance(msg_data[1], (bytes, bytearray)):
-                            if b"RFC822" in msg_data[0]:
-                                log.debug(f"Detected flat list structure for {decoded_num_str}. msg_data[0]: {msg_data[0][:100]}, type(msg_data[1]): {type(msg_data[1])}")
-                                email_body = msg_data[1]
-                        
-                        # Handle tuple structure with bytes or bytearray
-                        if email_body is None and isinstance(msg_data[0], tuple) and len(msg_data[0]) == 2 and isinstance(msg_data[0][1], (bytes, bytearray)):
-                            log.debug(f"Detected tuple structure for {decoded_num_str}. msg_data[0][0]: {str(msg_data[0][0])[:100]}, type(msg_data[0][1]): {type(msg_data[0][1])}")
-                            email_body = msg_data[0][1]
-
-                        if email_body is None:
-                            log.error(f"Failed to extract email_body for {decoded_num_str} using known structures. msg_data (first 1000 chars): {str(msg_data)[:1000]}")
-                            continue
-                        
-                        log.debug(f"Extracted email_body for {decoded_num_str}. Type: {type(email_body)}. Value (first 200): {str(email_body)[:200]}")
-
-                        email_body_bytes = None
-                        if isinstance(email_body, bytes):
-                            email_body_bytes = email_body
-                            log.debug(f"email_body for {decoded_num_str} is bytes. Length: {len(email_body_bytes)}")
-                        elif isinstance(email_body, bytearray):
-                            email_body_bytes = bytes(email_body)
-                            log.debug(f"email_body for {decoded_num_str} is bytearray. Converted to bytes. Length: {len(email_body_bytes)}")
-                        elif isinstance(email_body, str):
-                            log.warning(f"email_body for {decoded_num_str} is str. Converting to bytes. Value (first 200): {email_body[:200]}")
-                            email_body_bytes = email_body.encode('utf-8', errors='replace')
-                        else:
-                            log.error(f"email_body for {decoded_num_str} is UNEXPECTED type: {type(email_body)}. Value: {str(email_body)[:200]}. Attempting str conversion to bytes.")
-                            try:
-                                email_body_bytes = str(email_body).encode('utf-8', errors='replace')
-                            except Exception as e_conv:
-                                log.critical(f"Fatal: Could not convert email_body of type {type(email_body)} to bytes for email {decoded_num_str}: {e_conv}", exc_info=True)
-                                continue 
-
-                        if not email_body_bytes:
-                            log.warning(f"Skipping email {decoded_num_str} because email_body_bytes is empty or None after conversion attempts.")
-                            continue
-                        
-                        log.debug(f"Prepared email_body_bytes for {decoded_num_str}. Type: {type(email_body_bytes)}. Length: {len(email_body_bytes)}. Preview (first 200 as str): {email_body_bytes[:200].decode('utf-8', 'ignore')}")
-                        
-                        log.debug(f"DEBUG: Type of email_parser_module before use: {type(email_parser_module)}, Value: {str(email_parser_module)[:200]}")
-                        if not hasattr(email_parser_module, 'message_from_bytes'):
-                            log.critical(f"CRITICAL: email_parser_module (type: {type(email_parser_module)}) does not have 'message_from_bytes'. Value: {str(email_parser_module)[:200]}")
-                        
-                        email_obj = email_parser_module.message_from_bytes(email_body_bytes)
-                            
-                        from_address_raw = email_parser_module.utils.parseaddr(email_obj["From"])[1]
-                        from_address = from_address_raw.lower()
-                        
-                        # Decode MIME-encoded subject
-                        subject_raw = email_obj["Subject"]
-                        subject = self.decode_mime_header(subject_raw) if subject_raw else "No Subject"
-                        
-                        date = email_obj["Date"]
-                        log.info(f"Email From (raw): {from_address_raw}, (lower): {from_address}, Subject (decoded): {subject}")
-                            
-                        lowercase_filters = {k.lower(): v for k, v in filters.items()}
-                        log.debug(f"Checking against lowercase filters: {list(lowercase_filters.keys())}")
-
-                        if from_address in lowercase_filters:
-                            log.info(f"Sender {from_address} (matched from {from_address_raw}) is in lowercase_filters.")
-                            channel_id = lowercase_filters[from_address]
-                            channel = guild.get_channel(channel_id)
-                            
-                            if channel:
-                                log.info(f"Target channel found: {channel.name} ({channel.id})")
-                                content = ""
-                                html_content = ""
-                                
-                                if email_obj.is_multipart():
-                                    for part in email_obj.walk():
-                                        if part.get_content_type() == "text/plain":
-                                            try:
-                                                content = part.get_payload(decode=True).decode('utf-8', errors='replace')
-                                            except (UnicodeDecodeError, AttributeError):
-                                                content = "Could not decode email content."
-                                        elif part.get_content_type() == "text/html":
-                                            try:
-                                                html_content = part.get_payload(decode=True).decode('utf-8', errors='replace')
-                                            except (UnicodeDecodeError, AttributeError):
-                                                html_content = ""
-                                else:
-                                    try:
-                                        content = email_obj.get_payload(decode=True).decode('utf-8', errors='replace')
-                                    except (UnicodeDecodeError, AttributeError):
-                                        content = "Could not decode email content."
-                                
-                                # If we have HTML content, always use it for better formatting and link extraction
-                                if html_content and html_content.strip():
-                                    content = self.convert_html_to_text_with_links(html_content)
-                                elif not content.strip():
-                                    content = "No readable content found in email."
-                                
-                                # Enhance reading time indicators to make them more prominent
-                                content = self.enhance_reading_time_indicators(content)
-                                
-                                # Convert text links to clickable Discord format
-                                content = self.convert_text_links_to_discord_format(content)
-                                
-                                # Clean and process the content
-                                cleaned_content = self.clean_email_content(content)
-                                
-                                # Split content into chunks for pagination
-                                content_chunks = self.split_content_for_pagination(cleaned_content)
-                                
-                                # Create embeds for each chunk
-                                embeds = []
-                                for i, chunk in enumerate(content_chunks):
-                                    embed = discord.Embed(
-                                        title=subject if i == 0 else f"{subject} (Page {i + 1})",
-                                        description=chunk,
-                                        color=discord.Color.blue(),
-                                        timestamp=datetime.now(timezone.utc)
-                                    )
-                                    
-                                    if i == 0:  # Add metadata only to first embed
-                                        embed.add_field(name="From", value=from_address, inline=True)
-                                        embed.add_field(name="Date", value=date, inline=True)
-                                    
-                                    if len(content_chunks) > 1:
-                                        embed.set_footer(text=f"Page {i + 1} of {len(content_chunks)}")
-                                    
-                                    embeds.append(embed)
-                                
-                                # Send the message with pagination if needed
-                                if len(embeds) == 1:
-                                    await channel.send(embed=embeds[0])
-                                else:
-                                    view = EmailPaginationView(embeds)
-                                    await channel.send(embed=embeds[0], view=view)
-                                
-                                await imap_client.store(num, "+FLAGS", "(\\Seen)")
-
-                                log.info(f"Marked email {decoded_num_str} as Seen.")
-                                processed_email_count += 1
-                                log.info(f"Pausing for 5 seconds before processing next email...")
-                                await asyncio.sleep(5)
-                    except Exception as e:
-                        log.error(f"Error processing email {decoded_num_str}: {str(e)}", exc_info=True)
+            max_emails_per_check = await guild_config.max_emails_per_check()
+            
+            if not email_accounts:
+                log.debug(f"No email accounts configured for guild {guild_id}")
+                return
+            
+            if not sender_filters:
+                log.debug(f"No sender filters configured for guild {guild_id}")
+                return
+            
+            # Initialize encryption
+            await self.initialize_encryption(guild_id)
+            
+            # Process each email account
+            for account_name, account_info in email_accounts.items():
+                try:
+                    log.info(f"Checking emails for account {account_name} in guild {guild_id}")
+                    
+                    # Decrypt credentials
+                    email_address = await self.decrypt_credentials(guild_id, account_info.get('email', ''))
+                    password = await self.decrypt_credentials(guild_id, account_info.get('password', ''))
+                    imap_server = account_info.get('imap_server', 'imap.gmail.com')
+                    
+                    if not email_address or not password:
+                        log.error(f"Missing credentials for account {account_name}")
                         continue
-
-                await imap_client.logout()
-                log.info(f"Logged out from {creds['email']}.")
-            except Exception as e:
-                log.error(f"Error checking emails for account {email_account_address}: {str(e)}", exc_info=True) # Added exc_info
-        log.info(f"Email check finished for guild {guild.name}. Processed {processed_email_count} email(s).")
-        return processed_email_count
+                    
+                    # Connect to IMAP server with timeout
+                    mail = None
+                    try:
+                        # Set socket timeout
+                        socket.setdefaulttimeout(connection_timeout)
+                        
+                        mail = imaplib.IMAP4_SSL(imap_server)
+                        mail.login(email_address, password)
+                        mail.select('INBOX')
+                        
+                        # Search for unseen emails
+                        status, messages = mail.search(None, 'UNSEEN')
+                        
+                        if status != 'OK':
+                            log.error(f"Failed to search emails for {account_name}")
+                            continue
+                        
+                        message_numbers = messages[0].split()
+                        
+                        # Limit number of emails to process
+                        if len(message_numbers) > max_emails_per_check:
+                            log.warning(f"Found {len(message_numbers)} emails, limiting to {max_emails_per_check}")
+                            message_numbers = message_numbers[:max_emails_per_check]
+                        
+                        log.info(f"Processing {len(message_numbers)} unseen emails for {account_name}")
+                        
+                        # Process emails in batches to prevent memory issues
+                        batch_size = 10
+                        for i in range(0, len(message_numbers), batch_size):
+                            batch = message_numbers[i:i + batch_size]
+                            
+                            for num in batch:
+                                try:
+                                    # Rate limiting
+                                    if guild_id in self.last_email_process_time:
+                                        time_since_last = time.time() - self.last_email_process_time[guild_id]
+                                        if time_since_last < rate_limit_delay:
+                                            await asyncio.sleep(rate_limit_delay - time_since_last)
+                                    
+                                    self.last_email_process_time[guild_id] = time.time()
+                                    
+                                    # Fetch email data
+                                    status, msg_data = mail.fetch(num, '(RFC822)')
+                                    
+                                    if status != 'OK':
+                                        log.error(f"Failed to fetch email {num}")
+                                        continue
+                                    
+                                    # Extract email body from the response
+                                    email_body = None
+                                    if isinstance(msg_data, list) and len(msg_data) > 0:
+                                        if isinstance(msg_data[0], tuple) and len(msg_data[0]) > 1:
+                                            email_body = msg_data[0][1]
+                                        elif isinstance(msg_data[0], (bytes, bytearray)):
+                                            email_body = msg_data[0]
+                                        elif isinstance(msg_data[0], str):
+                                            email_body = msg_data[0].encode('utf-8')
+                                    
+                                    if not email_body:
+                                        log.error(f"Could not extract email body for message {num}")
+                                        continue
+                                    
+                                    # Parse email
+                                    msg = email.message_from_bytes(email_body)
+                                    
+                                    # Extract sender and subject
+                                    sender = msg.get('From', '')
+                                    subject = msg.get('Subject', '')
+                                    
+                                    # Decode subject
+                                    subject = self.decode_mime_header(subject)
+                                    
+                                    # Validate email format
+                                    if not self.is_valid_email_format(sender):
+                                        log.warning(f"Invalid sender format: {sender}")
+                                        continue
+                                    
+                                    # Extract sender email address
+                                    sender_email = re.search(r'<([^>]+)>', sender)
+                                    if sender_email:
+                                        sender_email = sender_email.group(1)
+                                    else:
+                                        sender_email = sender.strip()
+                                    
+                                    log.info(f"Processing email from {sender_email}: {subject}")
+                                    
+                                    # Check if sender is in our filters
+                                    if sender_email not in sender_filters:
+                                        log.debug(f"Sender {sender_email} not in filters, skipping")
+                                        continue
+                                    
+                                    # Get target channel
+                                    channel_id = sender_filters[sender_email]
+                                    channel = self.bot.get_channel(channel_id)
+                                    
+                                    if not channel:
+                                        log.error(f"Could not find channel {channel_id}")
+                                        continue
+                                    
+                                    # Extract email content
+                                    content = ""
+                                    html_content = ""
+                                    
+                                    if msg.is_multipart():
+                                        for part in msg.walk():
+                                            content_type = part.get_content_type()
+                                            if content_type == "text/plain":
+                                                payload = part.get_payload(decode=True)
+                                                if payload:
+                                                    try:
+                                                        content = payload.decode('utf-8', errors='ignore')
+                                                    except:
+                                                        content = str(payload)
+                                            elif content_type == "text/html":
+                                                payload = part.get_payload(decode=True)
+                                                if payload:
+                                                    try:
+                                                        html_content = payload.decode('utf-8', errors='ignore')
+                                                    except:
+                                                        html_content = str(payload)
+                                    else:
+                                        payload = msg.get_payload(decode=True)
+                                        if payload:
+                                            try:
+                                                content = payload.decode('utf-8', errors='ignore')
+                                            except:
+                                                content = str(payload)
+                                    
+                                    # Prefer HTML content for processing
+                                    if html_content:
+                                        content = self.convert_html_to_text_with_links(html_content)
+                                    
+                                    # Final safety check for any remaining HTML tags
+                                    if '<' in content and '>' in content:
+                                        # Emergency fallback: strip all HTML tags
+                                        content = re.sub(r'<[^>]+>', '', content)
+                                        log.warning("Applied emergency HTML tag removal")
+                                    
+                                    # Enhance reading time indicators
+                                    content = self.enhance_reading_time_indicators(content)
+                                    
+                                    # Convert text links to Discord format
+                                    content = self.convert_text_links_to_discord_format(content)
+                                    
+                                    # Clean the content
+                                    content = self.clean_email_content(content)
+                                    
+                                    if not content.strip():
+                                        log.warning(f"Empty content after processing for email {num}")
+                                        continue
+                                    
+                                    # No content length limit applied
+                                    
+                                    # Split content for pagination if needed
+                                    content_chunks = self.split_content_for_pagination(content)
+                                    
+                                    # Create and send embeds
+                                    embeds = []
+                                    for i, chunk in enumerate(content_chunks):
+                                        embed = discord.Embed(
+                                            title=subject if i == 0 else f"{subject} (continued)",
+                                            description=chunk,
+                                            color=0x00ff00,
+                                            timestamp=datetime.now()
+                                        )
+                                        
+                                        if i == 0:  # Add metadata to first embed
+                                            embed.add_field(name="From", value=sender_email, inline=True)
+                                            embed.add_field(name="Account", value=account_name, inline=True)
+                                        
+                                        if len(content_chunks) > 1:
+                                            embed.set_footer(text=f"Page {i+1}/{len(content_chunks)}")
+                                        
+                                        embeds.append(embed)
+                                    
+                                    # Send embeds
+                                    if len(embeds) == 1:
+                                        await channel.send(embed=embeds[0])
+                                    else:
+                                        # Use pagination for multiple embeds
+                                        view = EmailPaginationView(embeds)
+                                        await channel.send(embed=embeds[0], view=view)
+                                    
+                                    # Mark email as seen
+                                    mail.store(num, '+FLAGS', '\\Seen')
+                                    
+                                    log.info(f"Successfully processed and sent email from {sender_email}")
+                                    
+                                except Exception as e:
+                                    log.error(f"Error processing email {num}: {e}")
+                                    continue
+                            
+                            # Small delay between batches to prevent overwhelming
+                            if i + batch_size < len(message_numbers):
+                                await asyncio.sleep(1)
+                    
+                    except socket.timeout:
+                        log.error(f"Connection timeout for account {account_name}")
+                        continue
+                    except imaplib.IMAP4.error as e:
+                        log.error(f"IMAP error for account {account_name}: {e}")
+                        continue
+                    finally:
+                        # Always close the connection
+                        if mail:
+                            try:
+                                mail.close()
+                                mail.logout()
+                            except:
+                                pass
+                        # Reset socket timeout
+                        socket.setdefaulttimeout(None)
+                
+                except Exception as e:
+                    log.error(f"Error checking emails for account {account_name}: {e}")
+                    continue
+            
+        except Exception as e:
+            log.error(f"Error in check_emails_for_guild for guild {guild_id}: {e}")
 
     async def start_email_checking(self):
         """Start the email checking loop."""
-        while True:
+        await self.bot.wait_until_ready()
+        
+        while not self.bot.is_closed():
             try:
+                # Check emails for all guilds
                 for guild in self.bot.guilds:
                     try:
-                        interval = await self.config.guild(guild).check_interval()
-                        await self.check_emails(guild)
+                        guild_config = self.config.guild(guild)
+                        
+                        # Check if enough time has passed since last check
+                        last_check = await guild_config.last_check()
+                        check_interval = await guild_config.check_interval()
+                        current_time = datetime.now().timestamp()
+                        
+                        if last_check is None or (current_time - last_check) >= check_interval:
+                            await guild_config.last_check.set(current_time)
+                            await self.check_emails_for_guild(guild.id)
+                        
                     except Exception as e:
-                        print(f"Error checking emails for guild {guild.id}: {str(e)}")
+                        log.error(f"Error checking emails for guild {guild.id}: {e}")
                         continue
                 
-                # Use a default interval if no guilds are configured
-                # Always wait the (last guild's) interval or 300s before next check cycle
-                await asyncio.sleep(interval if 'interval' in locals() else 300) # Guild interval is 6 hours by default
+                # Wait before next iteration (minimum 5 minutes)
+                await asyncio.sleep(300)
+                
             except Exception as e:
-                print(f"Error in email checking loop: {str(e)}")
-                await asyncio.sleep(60)  # Wait a minute before retrying on error
+                log.error(f"Error in email checking loop: {e}")
+                await asyncio.sleep(300)  # Wait 5 minutes before retrying
 
-    async def cog_load(self) -> None:
-        """Start email checking when cog loads."""
-        self.email_check_task = self.bot.loop.create_task(self.start_email_checking())
+    async def cog_load(self):
+        """Start the email checking task when the cog loads."""
+        self.email_check_task = asyncio.create_task(self.start_email_checking())
+        log.info("Email news cog loaded and email checking started")
+
+async def setup(bot):
+    await bot.add_cog(EmailNews(bot))
