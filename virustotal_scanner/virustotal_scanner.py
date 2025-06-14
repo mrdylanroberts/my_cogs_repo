@@ -30,51 +30,38 @@ class VirusTotalPaginationView(discord.ui.View):
         self.current_page = 0
         self.max_pages = len(embeds)
         
-        # Add numbered buttons for pages (up to 5 pages)
-        if self.max_pages <= 5:
-            for i in range(self.max_pages):
-                button = discord.ui.Button(
-                    label=str(i + 1),
-                    emoji=f"{i + 1}️⃣",
-                    style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary,
-                    custom_id=f"vt_page_{i}_{id(self)}"
-                )
-                button.callback = self.create_page_callback(i)
-                self.add_item(button)
-        else:
-            # For more than 5 pages, use previous/next buttons
+        # Always use Previous/Next buttons for consistent UI
+        if self.max_pages > 1:
             prev_button = discord.ui.Button(
                 label='Previous',
                 style=discord.ButtonStyle.secondary,
                 emoji='⬅️',
-                custom_id=f'vt_previous_{id(self)}'
+                custom_id=f'vt_previous_{id(self)}',
+                disabled=True  # Start with previous disabled
             )
             prev_button.callback = self.previous_callback
             self.add_item(prev_button)
+            
+            # Add page indicator
+            page_button = discord.ui.Button(
+                label=f'Page 1/{self.max_pages}',
+                style=discord.ButtonStyle.primary,
+                custom_id=f'vt_page_indicator_{id(self)}',
+                disabled=True
+            )
+            self.add_item(page_button)
             
             next_button = discord.ui.Button(
                 label='Next',
                 style=discord.ButtonStyle.secondary,
                 emoji='➡️',
-                custom_id=f'vt_next_{id(self)}'
+                custom_id=f'vt_next_{id(self)}',
+                disabled=self.max_pages <= 1
             )
             next_button.callback = self.next_callback
             self.add_item(next_button)
     
-    def create_page_callback(self, page_num: int):
-        async def callback(interaction: discord.Interaction):
-            try:
-                await self.go_to_page(interaction, page_num)
-            except Exception as e:
-                log.error(f"Error in page callback for page {page_num}: {e}", exc_info=True)
-                try:
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message("❌ An error occurred while changing pages.", ephemeral=True)
-                    else:
-                        await interaction.followup.send("❌ An error occurred while changing pages.", ephemeral=True)
-                except Exception:
-                    pass
-        return callback
+
     
     async def previous_callback(self, interaction: discord.Interaction):
         try:
@@ -115,11 +102,15 @@ class VirusTotalPaginationView(discord.ui.View):
             if 0 <= page < self.max_pages:
                 self.current_page = page
                 
-                # Update button styles for numbered buttons
-                if self.max_pages <= 5:
-                    for i, item in enumerate(self.children):
-                        if isinstance(item, discord.ui.Button) and item.custom_id and "vt_page_" in item.custom_id:
-                            item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
+                # Update button states
+                for item in self.children:
+                    if isinstance(item, discord.ui.Button) and item.custom_id:
+                        if "vt_previous_" in item.custom_id:
+                            item.disabled = (page == 0)
+                        elif "vt_next_" in item.custom_id:
+                            item.disabled = (page == self.max_pages - 1)
+                        elif "vt_page_indicator_" in item.custom_id:
+                            item.label = f'Page {page + 1}/{self.max_pages}'
                 
                 if not interaction.response.is_done():
                     await interaction.response.edit_message(embed=self.embeds[page], view=self)
@@ -566,10 +557,15 @@ class VirusTotalScanner(commands.Cog):
         api_key = scan_data['api_key']
         
         url_results = []
+        failed_urls = []
         
         async with aiohttp.ClientSession() as session:
-            for url in urls:
+            for i, url in enumerate(urls):
                 try:
+                    # Add delay between requests to avoid rate limiting
+                    if i > 0:
+                        await asyncio.sleep(2)
+                    
                     # First, submit URL for scanning
                     scan_params = {
                         'apikey': api_key,
@@ -577,34 +573,59 @@ class VirusTotalScanner(commands.Cog):
                     }
                     
                     async with session.post(self.vt_url_scan, data=scan_params) as response:
-                        if response.status != 200:
+                        if response.status == 204:  # Rate limit exceeded
+                            log.warning(f"Rate limit exceeded for URL {url}, waiting longer...")
+                            await asyncio.sleep(10)
+                            continue
+                        elif response.status != 200:
                             log.error(f"VirusTotal URL scan failed for {url}: {response.status}")
+                            failed_urls.append(url)
                             continue
                             
-                    # Wait a moment then get the report
-                    await asyncio.sleep(5)
+                    # Wait longer for the scan to complete
+                    await asyncio.sleep(8)
                     
+                    # Try to get the report multiple times
                     report_params = {
                         'apikey': api_key,
                         'resource': url
                     }
                     
-                    async with session.get(self.vt_url_report, params=report_params) as response:
-                        if response.status != 200:
-                            log.error(f"VirusTotal URL report failed for {url}: {response.status}")
-                            continue
-                            
-                        data = await response.json()
-                        if data.get('response_code') == 1:
-                            url_results.append((url, data))
+                    for attempt in range(3):  # Try up to 3 times
+                        async with session.get(self.vt_url_report, params=report_params) as response:
+                            if response.status == 204:  # Rate limit
+                                await asyncio.sleep(10)
+                                continue
+                            elif response.status != 200:
+                                log.error(f"VirusTotal URL report failed for {url}: {response.status}")
+                                if attempt == 2:  # Last attempt
+                                    failed_urls.append(url)
+                                break
+                                
+                            data = await response.json()
+                            if data.get('response_code') == 1:
+                                url_results.append((url, data))
+                                break
+                            elif data.get('response_code') == -2:  # Still queued
+                                if attempt < 2:
+                                    await asyncio.sleep(10)
+                                    continue
+                                else:
+                                    log.warning(f"URL {url} still queued after multiple attempts")
+                                    failed_urls.append(url)
+                            else:
+                                log.warning(f"No report available for URL {url}")
+                                failed_urls.append(url)
+                            break
                         
                 except Exception as e:
                     log.error(f"Error scanning URL {url}: {e}")
+                    failed_urls.append(url)
                     continue
         
         # Process all results together with pagination
-        if url_results:
-            await self.process_url_batch_results(url_results, message)
+        if url_results or failed_urls:
+            await self.process_url_batch_results(url_results, message, failed_urls)
 
     async def scan_url(self, scan_data: Dict):
         """Scan a single URL using VirusTotal API (for manual scans)."""
@@ -640,7 +661,7 @@ class VirusTotalScanner(commands.Cog):
                 data = await response.json()
                 await self.process_url_report(data, url, message)
 
-    async def process_url_batch_results(self, url_results: List[Tuple[str, Dict]], message: discord.Message):
+    async def process_url_batch_results(self, url_results: List[Tuple[str, Dict]], message: discord.Message, failed_urls: List[str] = None):
         """Process and display multiple URL scan results with pagination."""
         embeds = []
         
@@ -651,12 +672,16 @@ class VirusTotalScanner(commands.Cog):
             timestamp=datetime.now(timezone.utc)
         )
         
-        total_urls = len(url_results)
+        failed_urls = failed_urls or []
+        total_urls = len(url_results) + len(failed_urls)
         clean_count = 0
         suspicious_count = 0
         malicious_count = 0
+        failed_count = len(failed_urls)
         
         summary_text = ""
+        
+        # Add successful scans
         for i, (url, data) in enumerate(url_results, 1):
             positives = data.get('positives', 0)
             total = data.get('total', 0)
@@ -674,6 +699,11 @@ class VirusTotalScanner(commands.Cog):
             url_display = url[:50] + "..." if len(url) > 50 else url
             summary_text += f"{status_emoji} **URL {i}**: `{url_display}` ({positives}/{total})\n"
         
+        # Add failed scans
+        for i, url in enumerate(failed_urls, len(url_results) + 1):
+            url_display = url[:50] + "..." if len(url) > 50 else url
+            summary_text += f"❌ **URL {i}**: `{url_display}` (Scan failed)\n"
+        
         summary_embed.add_field(
             name=f"Scanned {total_urls} URLs",
             value=summary_text[:1024],  # Discord field limit
@@ -682,6 +712,8 @@ class VirusTotalScanner(commands.Cog):
         
         # Add statistics
         stats_text = f"✅ Clean: {clean_count}\n⚠️ Suspicious: {suspicious_count}\n🚨 Malicious: {malicious_count}"
+        if failed_count > 0:
+            stats_text += f"\n❌ Failed: {failed_count}"
         summary_embed.add_field(name="Statistics", value=stats_text, inline=True)
         
         summary_embed.set_footer(text="Powered by VirusTotal • Use navigation buttons for detailed results")
