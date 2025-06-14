@@ -301,6 +301,10 @@ class Glossary(commands.Cog):
             embed.add_field(name="Definition", value=definition, inline=False)
             embed.set_footer(text=f"Added by {ctx.author.display_name}")
             await ctx.send(embed=embed)
+            
+            # Auto-refresh the glossary to show the new term
+            await asyncio.sleep(1)  # Brief pause for better UX
+            await self.show_glossary(ctx)
         else:
             # Add to pending terms for moderation
             pending_terms = await self.config.guild(ctx.guild).pending_terms()
@@ -417,6 +421,10 @@ class Glossary(commands.Cog):
         embed.set_footer(text=f"Originally submitted by {term_data['author_name']}")
         
         await ctx.send(embed=embed)
+        
+        # Auto-refresh the glossary to show the approved term
+        await asyncio.sleep(1)  # Brief pause for better UX
+        await self.show_glossary(ctx)
     
     @glossary.command(name="reject")
     @commands.has_permissions(manage_messages=True)
