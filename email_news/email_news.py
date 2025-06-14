@@ -404,6 +404,45 @@ class EmailNews(commands.Cog):
                 # Clean up excessive newlines but preserve intentional spacing
                 result = re.sub(r'\n{3,}', '\n\n', result)
                 
+                # Process bare tracking URLs that weren't in <a> tags
+                def replace_bare_tracking_url(match):
+                    url = match.group(0)
+                    real_url = self.extract_real_url_from_tracking(url)
+                    
+                    # Try to generate a descriptive title based on the URL
+                    if real_url != url:  # Only if we successfully extracted a real URL
+                        # Extract potential title from URL path
+                        try:
+                            from urllib.parse import urlparse
+                            parsed = urlparse(real_url)
+                            path_parts = parsed.path.strip('/').split('/')
+                            
+                            # Look for descriptive path segments
+                            if len(path_parts) >= 2:
+                                # Get the last meaningful part (usually the article slug)
+                                title_part = path_parts[-1].split('?')[0]
+                                if title_part and len(title_part) > 10:
+                                    # Convert URL slug to readable title
+                                    title = title_part.replace('-', ' ').replace('_', ' ')
+                                    # Capitalize words
+                                    title = ' '.join(word.capitalize() for word in title.split())
+                                    
+                                    # Limit title length
+                                    if len(title) > 100:
+                                        title = title[:97] + "..."
+                                    
+                                    log.debug(f"Generated title from URL: '{title}' for {real_url}")
+                                    return f"[{title}]({real_url})"
+                        except Exception as e:
+                            log.debug(f"Error generating title from URL {real_url}: {e}")
+                    
+                    # Fallback: return the real URL
+                    return real_url
+                
+                # Replace bare tracking URLs with descriptive links
+                tracking_url_pattern = r'https://tracking\.tldrnewsletter\.com/CL0/[^\s]+'
+                result = re.sub(tracking_url_pattern, replace_bare_tracking_url, result)
+                
                 # No final length limit applied
                 
                 return result
