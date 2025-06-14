@@ -490,3 +490,8 @@ class Glossary(commands.Cog):
             "📤 Glossary exported successfully!",
             file=discord.File(file_obj, filename=filename)
         )
+
+
+async def setup(bot):
+    """Setup function for Red-DiscordBot."""
+    await bot.add_cog(Glossary(bot))
