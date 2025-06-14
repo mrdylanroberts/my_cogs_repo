@@ -4,7 +4,7 @@ import discord
 import hashlib
 import re
 import json
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
 from datetime import datetime, timezone
 import base64
 import time
@@ -524,10 +524,11 @@ class VirusTotalScanner(commands.Cog):
         # Scan URLs in message content
         if await guild_config.scan_urls():
             urls = self.url_pattern.findall(message.content)
-            for url in urls:
+            if urls:
+                # Process all URLs from the same message together
                 scan_data = {
-                    'type': 'url',
-                    'target': url,
+                    'type': 'url_batch',
+                    'target': urls,
                     'message': message,
                     'api_key': api_key
                 }
@@ -551,13 +552,62 @@ class VirusTotalScanner(commands.Cog):
         try:
             if scan_data['type'] == 'url':
                 await self.scan_url(scan_data)
+            elif scan_data['type'] == 'url_batch':
+                await self.scan_url_batch(scan_data)
             elif scan_data['type'] == 'file':
                 await self.scan_file(scan_data)
         except Exception as e:
             log.error(f"Error performing scan: {e}", exc_info=True)
 
+    async def scan_url_batch(self, scan_data: Dict):
+        """Scan multiple URLs from the same message using VirusTotal API."""
+        urls = scan_data['target']
+        message = scan_data['message']
+        api_key = scan_data['api_key']
+        
+        url_results = []
+        
+        async with aiohttp.ClientSession() as session:
+            for url in urls:
+                try:
+                    # First, submit URL for scanning
+                    scan_params = {
+                        'apikey': api_key,
+                        'url': url
+                    }
+                    
+                    async with session.post(self.vt_url_scan, data=scan_params) as response:
+                        if response.status != 200:
+                            log.error(f"VirusTotal URL scan failed for {url}: {response.status}")
+                            continue
+                            
+                    # Wait a moment then get the report
+                    await asyncio.sleep(5)
+                    
+                    report_params = {
+                        'apikey': api_key,
+                        'resource': url
+                    }
+                    
+                    async with session.get(self.vt_url_report, params=report_params) as response:
+                        if response.status != 200:
+                            log.error(f"VirusTotal URL report failed for {url}: {response.status}")
+                            continue
+                            
+                        data = await response.json()
+                        if data.get('response_code') == 1:
+                            url_results.append((url, data))
+                        
+                except Exception as e:
+                    log.error(f"Error scanning URL {url}: {e}")
+                    continue
+        
+        # Process all results together with pagination
+        if url_results:
+            await self.process_url_batch_results(url_results, message)
+
     async def scan_url(self, scan_data: Dict):
-        """Scan a URL using VirusTotal API."""
+        """Scan a single URL using VirusTotal API (for manual scans)."""
         url = scan_data['target']
         message = scan_data['message']
         api_key = scan_data['api_key']
@@ -589,6 +639,121 @@ class VirusTotalScanner(commands.Cog):
                     
                 data = await response.json()
                 await self.process_url_report(data, url, message)
+
+    async def process_url_batch_results(self, url_results: List[Tuple[str, Dict]], message: discord.Message):
+        """Process and display multiple URL scan results with pagination."""
+        embeds = []
+        
+        # Create summary embed first
+        summary_embed = discord.Embed(
+            title="🛡️ VirusTotal URL Scan Results Summary",
+            color=discord.Color.blue(),
+            timestamp=datetime.now(timezone.utc)
+        )
+        
+        total_urls = len(url_results)
+        clean_count = 0
+        suspicious_count = 0
+        malicious_count = 0
+        
+        summary_text = ""
+        for i, (url, data) in enumerate(url_results, 1):
+            positives = data.get('positives', 0)
+            total = data.get('total', 0)
+            
+            if positives == 0:
+                status_emoji = "✅"
+                clean_count += 1
+            elif positives < 5:
+                status_emoji = "⚠️"
+                suspicious_count += 1
+            else:
+                status_emoji = "🚨"
+                malicious_count += 1
+            
+            url_display = url[:50] + "..." if len(url) > 50 else url
+            summary_text += f"{status_emoji} **URL {i}**: `{url_display}` ({positives}/{total})\n"
+        
+        summary_embed.add_field(
+            name=f"Scanned {total_urls} URLs",
+            value=summary_text[:1024],  # Discord field limit
+            inline=False
+        )
+        
+        # Add statistics
+        stats_text = f"✅ Clean: {clean_count}\n⚠️ Suspicious: {suspicious_count}\n🚨 Malicious: {malicious_count}"
+        summary_embed.add_field(name="Statistics", value=stats_text, inline=True)
+        
+        summary_embed.set_footer(text="Powered by VirusTotal • Use navigation buttons for detailed results")
+        embeds.append(summary_embed)
+        
+        # Create detailed embeds for each URL
+        for i, (url, data) in enumerate(url_results, 1):
+            positives = data.get('positives', 0)
+            total = data.get('total', 0)
+            scan_date = data.get('scan_date', 'Unknown')
+            permalink = data.get('permalink', '')
+            scans = data.get('scans', {})
+            
+            # Determine threat level
+            if positives == 0:
+                color = discord.Color.green()
+                status = "✅ Clean"
+            elif positives < 5:
+                color = discord.Color.orange()
+                status = "⚠️ Suspicious"
+            else:
+                color = discord.Color.red()
+                status = "🚨 Malicious"
+            
+            # Create detailed embed for this URL
+            detail_embed = discord.Embed(
+                title=f"🛡️ URL {i} Detailed Results",
+                color=color,
+                timestamp=datetime.now(timezone.utc)
+            )
+            
+            detail_embed.add_field(name="URL", value=f"```{url[:100]}{'...' if len(url) > 100 else ''}```", inline=False)
+            detail_embed.add_field(name="Status", value=status, inline=True)
+            detail_embed.add_field(name="Detections", value=f"{positives}/{total}", inline=True)
+            detail_embed.add_field(name="Scan Date", value=scan_date, inline=True)
+            
+            if permalink:
+                detail_embed.add_field(name="Full Report", value=f"[View on VirusTotal]({permalink})", inline=False)
+            
+            # Add detection details if any
+            if positives > 0 and scans:
+                detected_engines = []
+                for engine, result in scans.items():
+                    if result.get('detected', False):
+                        detected_engines.append(f"**{engine}**: {result.get('result', 'Malicious site')}")
+                
+                if detected_engines:
+                    detection_text = "\n".join(detected_engines[:10])  # Limit to first 10
+                    if len(detected_engines) > 10:
+                        detection_text += f"\n... and {len(detected_engines) - 10} more"
+                    
+                    detail_embed.add_field(
+                        name=f"Detected by {len(detected_engines)} engines:",
+                        value=detection_text[:1024],  # Discord field limit
+                        inline=False
+                    )
+            
+            detail_embed.set_footer(text="Powered by VirusTotal")
+            embeds.append(detail_embed)
+        
+        # Send with pagination if multiple embeds
+        if len(embeds) > 1:
+            view = VirusTotalPaginationView(embeds, timeout=None)
+            await message.channel.send(embed=embeds[0], view=view)
+        else:
+            await message.channel.send(embed=embeds[0])
+        
+        # Handle malicious content if any
+        malicious_urls = [(url, data) for url, data in url_results if data.get('positives', 0) >= await self.config.guild(message.guild).min_detections()]
+        if malicious_urls:
+            for url, data in malicious_urls:
+                await self.handle_malicious_content(message, 'URL', data.get('positives', 0), data.get('total', 0))
 
     async def scan_file(self, scan_data: Dict):
         """Scan a file attachment using VirusTotal API."""
