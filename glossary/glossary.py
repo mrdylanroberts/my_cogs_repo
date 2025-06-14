@@ -3,6 +3,7 @@ import json
 import os
 import asyncio
 from typing import Dict, List, Optional, Tuple
+import discord
 from redbot.core import commands, data_manager, Config
 from redbot.core.utils.chat_formatting import box, pagify
 from redbot.core.utils.predicates import MessagePredicate
