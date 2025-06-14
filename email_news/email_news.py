@@ -261,37 +261,35 @@ class EmailNews(commands.Cog):
                     else:
                         link.decompose()
                 
-                # Add line breaks for table rows
+                # Handle line breaks for block elements before removing tags
+                for br in soup.find_all('br'):
+                    br.replace_with('\n')
+                
+                # Add line breaks after table rows
                 for tr in soup.find_all('tr'):
-                    tr.append('\n')
+                    tr.insert_after('\n')
                 
-                # Add spaces for table cells
+                # Add spaces after table cells
                 for td in soup.find_all(['td', 'th']):
-                    td.append(' ')
+                    td.insert_after(' ')
                 
-                # Remove all table tags but keep content
-                for table_tag in soup.find_all(['table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th']):
-                    table_tag.unwrap()
+                # Add line breaks after block elements
+                for block in soup.find_all(['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                    block.insert_after('\n')
                 
-                # Add line breaks for block elements
-                for block in soup.find_all(['div', 'p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-                    if block.name == 'br':
-                        block.replace_with('\n')
-                    else:
-                        block.append('\n')
-                        block.unwrap()
-                
-                # Get clean text
-                text = soup.get_text()
+                # Get clean text (this automatically removes all HTML tags)
+                text = soup.get_text(separator=' ', strip=True)
                 
                 # Clean up whitespace
-                text = re.sub(r'\s+', ' ', text)  # Multiple spaces to single
-                text = re.sub(r'\n\s*\n', '\n\n', text)  # Clean paragraph breaks
+                text = re.sub(r'[ \t]+', ' ', text)  # Multiple spaces/tabs to single space
+                text = re.sub(r'\n[ \t]*\n', '\n\n', text)  # Clean paragraph breaks
                 text = re.sub(r'\n{3,}', '\n\n', text)  # Max 2 consecutive newlines
-                text = re.sub(r'^\s+|\s+$', '', text)  # Trim start/end whitespace
+                text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # Trim start/end whitespace per line
                 
-                # Remove zero-width non-joiners
+                # Remove zero-width non-joiners and other invisible characters
                 text = text.replace('\u200c', '')
+                text = text.replace('\u200b', '')  # Zero-width space
+                text = text.replace('\ufeff', '')  # Byte order mark
                 
                 return text.strip()
             
