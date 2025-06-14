@@ -204,7 +204,7 @@ class EmailNews(commands.Cog):
         return urls
 
     def clean_email_content(self, content: str) -> str:
-        """Clean and format email content for Discord."""
+        """Clean and format email content for Discord while preserving inline links."""
         if not content:
             return "No content available"
         
@@ -214,7 +214,9 @@ class EmailNews(commands.Cog):
         
         # Remove common email artifacts
         content = re.sub(r'‌+', '', content)  # Remove zero-width non-joiners
-        content = re.sub(r'\s*\[\d+\]\s*', ' ', content)  # Remove reference numbers like [1], [2]
+        
+        # DON'T remove reference numbers like [1], [2] as they may be linked to URLs
+        # Instead, preserve them to maintain link context
         
         # Clean up excessive spacing
         content = re.sub(r'\n{3,}', '\n\n', content)
@@ -616,9 +618,6 @@ class EmailNews(commands.Cog):
                                 # Clean and process the content
                                 cleaned_content = self.clean_email_content(content)
                                 
-                                # Extract links for reference
-                                links = self.extract_links_from_content(cleaned_content)
-                                
                                 # Split content into chunks for pagination
                                 content_chunks = self.split_content_for_pagination(cleaned_content)
                                 
@@ -635,13 +634,6 @@ class EmailNews(commands.Cog):
                                     if i == 0:  # Add metadata only to first embed
                                         embed.add_field(name="From", value=from_address, inline=True)
                                         embed.add_field(name="Date", value=date, inline=True)
-                                        
-                                        # Add links if found (limit to first 5 to avoid embed limits)
-                                        if links:
-                                            link_text = "\n".join([f"[Link {j+1}]({link})" for j, link in enumerate(links[:5])])
-                                            if len(links) > 5:
-                                                link_text += f"\n... and {len(links) - 5} more links"
-                                            embed.add_field(name="Links", value=link_text, inline=False)
                                     
                                     if len(content_chunks) > 1:
                                         embed.set_footer(text=f"Page {i + 1} of {len(content_chunks)}")
