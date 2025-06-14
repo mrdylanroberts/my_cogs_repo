@@ -230,7 +230,7 @@ class EmailNews(commands.Cog):
             
             # Remove dangerous links but preserve safe ones
             def filter_link(match):
-                url = match.group(1).lower()
+                url = match.group(1)
                 text = match.group(2)
                 
                 # Check if URL contains dangerous patterns
@@ -238,12 +238,30 @@ class EmailNews(commands.Cog):
                     if re.search(pattern, url, re.IGNORECASE):
                         return f"{text} [LINK REMOVED FOR SECURITY]"
                 
-                # Keep safe links
-                return f"{text} ({match.group(1)})"
+                # Check if this is a reading time link (contains tracking URL and reading time text)
+                if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
+                    # Keep the format that enhance_reading_time_indicators expects
+                    return f"{text} {url}"
+                
+                # Keep other safe links in standard format
+                return f"{text} ({url})"
             
             # Convert <a href="url">text</a> to text (url) with filtering
-            html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>([^<]+)</a>', 
-                                filter_link, html_content, flags=re.IGNORECASE)
+            # Handle nested tags within links properly
+            def replace_link(match):
+                url = match.group(1)
+                inner_content = match.group(2)
+                
+                # Remove HTML tags from inner content
+                clean_text = re.sub(r'<[^>]+>', '', inner_content)
+                clean_text = html.unescape(clean_text.strip())
+                
+                # Apply filtering
+                fake_match = type('Match', (), {'group': lambda i: url if i == 1 else clean_text})()
+                return filter_link(fake_match)
+            
+            html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
+                                replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
             
             # Remove other HTML tags
             html_content = re.sub(r'<[^>]+>', '', html_content)
@@ -269,24 +287,33 @@ class EmailNews(commands.Cog):
         if not content:
             return content
         
-        # Pattern to find reading time indicators with potential tracking URLs
-        # This looks for text followed by (X min read) and optionally a URL
-        reading_time_pattern = r'([A-Z][^\n.!?]*?)\s*\((\d+)\s*min(?:ute)?\s*read\)(?:\s*([https?://][^\s)]+))?'
+        # Pattern to find reading time indicators with tracking URLs
+        # This looks for text with (X min read) followed by a tracking URL
+        reading_time_with_url_pattern = r'([^\n]*?)\s*\((\d+)\s*min(?:ute)?\s*read\)\s+(https?://tracking\.tldrnewsletter\.com[^\s]+)'
         
-        def enhance_reading_time(match):
+        def enhance_reading_time_with_url(match):
             title = match.group(1).strip()
             minutes = match.group(2)
-            url = match.group(3) if match.group(3) else None
+            url = match.group(3)
             
-            # If there's a URL, create a clickable link
-            if url:
-                return f'**{title}** [({minutes} min read)]({url})'
-            else:
-                # If no URL, just format as bold title with plain reading time
-                return f'**{title}** ({minutes} min read)'
+            # Create a clickable link with proper spacing
+            return f'\n\n**{title}** [({minutes} min read)]({url})\n'
         
-        # Apply the enhancement
-        content = re.sub(reading_time_pattern, enhance_reading_time, content, flags=re.IGNORECASE)
+        # Apply the enhancement for reading time links with URLs
+        content = re.sub(reading_time_with_url_pattern, enhance_reading_time_with_url, content, flags=re.IGNORECASE)
+        
+        # Pattern to find standalone reading time indicators without URLs
+        standalone_reading_time_pattern = r'([^\n]*?)\s*\((\d+)\s*min(?:ute)?\s*read\)(?!\s+https?)'
+        
+        def enhance_standalone_reading_time(match):
+            title = match.group(1).strip()
+            minutes = match.group(2)
+            
+            # Format as bold title with plain reading time and proper spacing
+            return f'\n\n**{title}** ({minutes} min read)\n'
+        
+        # Apply the enhancement for standalone reading time indicators
+        content = re.sub(standalone_reading_time_pattern, enhance_standalone_reading_time, content, flags=re.IGNORECASE)
         
         return content
     
