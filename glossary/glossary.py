@@ -17,27 +17,14 @@ class GlossaryView(discord.ui.View):
     """Discord UI View for glossary pagination and interactions."""
     
     def __init__(self, entries: List[Tuple[str, str]], per_page: int = 10):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
         self.entries = entries
         self.per_page = per_page
         self.current_page = 0
         self.max_pages = (len(entries) - 1) // per_page + 1 if entries else 1
-        self.message = None  # Store the message for timeout handling
+        self.message = None  # Store the message for reference
         # Update button states after initialization
         self.update_buttons()
-    
-    async def on_timeout(self):
-        """Handle view timeout by disabling all buttons."""
-        for item in self.children:
-            item.disabled = True
-        
-        if self.message:
-            try:
-                await self.message.edit(view=self)
-            except discord.NotFound:
-                pass  # Message was deleted
-            except discord.HTTPException:
-                pass  # Other Discord API errors
         
     def get_page_embed(self) -> discord.Embed:
         """Generate embed for current page."""
