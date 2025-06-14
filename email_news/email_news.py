@@ -1,24 +1,30 @@
 import asyncio
+import email
+import html
+import imaplib
 import json
 import base64
 import email as email_parser_module # Alias email to email_parser_module
 # email.utils is accessible via email_parser_module.utils
+from email.header import decode_header
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 import re
-import html
 
 import discord
+from redbot.core import commands, Config, bot
+from redbot.core.utils.chat_formatting import pagify
+from redbot.core.utils.predicates import MessagePredicate
+from redbot.core.utils.menus import menu, DEFAULT_CONTROLS
+from redbot.core.bot import Red
+from redbot.core.data_manager import cog_data_path
+from redbot.core.utils.chat_formatting import box
 
 import aiofiles
 from aioimaplib import aioimaplib
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-
-from redbot.core import commands, Config
-from redbot.core.bot import Red
-from redbot.core.utils.chat_formatting import box
 
 import logging
 
@@ -204,15 +210,41 @@ class EmailNews(commands.Cog):
         return urls
     
     def convert_html_to_text_with_links(self, html_content: str) -> str:
-        """Convert HTML content to text while preserving inline links."""
+        """Convert HTML content to text while preserving inline links and filtering dangerous links."""
         if not html_content:
             return ""
         
         try:
-            # Remove HTML tags but preserve link structure
-            # Convert <a href="url">text</a> to text (url)
+            # Remove CSS styles and script tags completely
+            html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+            html_content = re.sub(r'<script[^>]*>.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+            
+            # Filter out unsubscribe and tracking links for security
+            dangerous_patterns = [
+                r'unsubscribe',
+                r'manage.*subscription',
+                r'tracking\.',
+                r'click\..*\.com',
+                r'email.*forward',
+                r'opt.*out'
+            ]
+            
+            # Remove dangerous links but preserve safe ones
+            def filter_link(match):
+                url = match.group(1).lower()
+                text = match.group(2)
+                
+                # Check if URL contains dangerous patterns
+                for pattern in dangerous_patterns:
+                    if re.search(pattern, url, re.IGNORECASE):
+                        return f"{text} [LINK REMOVED FOR SECURITY]"
+                
+                # Keep safe links
+                return f"{text} ({match.group(1)})"
+            
+            # Convert <a href="url">text</a> to text (url) with filtering
             html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>([^<]+)</a>', 
-                                r'\2 (\1)', html_content, flags=re.IGNORECASE)
+                                filter_link, html_content, flags=re.IGNORECASE)
             
             # Remove other HTML tags
             html_content = re.sub(r'<[^>]+>', '', html_content)
@@ -220,9 +252,13 @@ class EmailNews(commands.Cog):
             # Decode HTML entities
             html_content = html.unescape(html_content)
             
-            # Clean up extra whitespace
+            # Clean up extra whitespace and CSS remnants
             html_content = re.sub(r'\s+', ' ', html_content)
             html_content = re.sub(r'\n\s*\n', '\n\n', html_content)
+            
+            # Remove CSS property patterns that might leak through
+            html_content = re.sub(r'[a-z-]+:\s*[^;]+;', '', html_content, flags=re.IGNORECASE)
+            html_content = re.sub(r'\{[^}]*\}', '', html_content)
             
             return html_content.strip()
         except Exception as e:
