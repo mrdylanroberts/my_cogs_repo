@@ -413,8 +413,16 @@ class EmailNews(commands.Cog):
                         url = href_match.group(1)
                         text = text_match.group(1).strip() if text_match else url
                         
+                        # Debug logging
+                        log.debug(f"Regex fallback processing link: {url[:100]}... with text: '{text}'")
+                        
+                        # Extract real URL from tracking links
+                        real_url = self.extract_real_url_from_tracking(url)
+                        log.debug(f"Regex fallback extracted real URL: {real_url}")
+                        
                         # Validate URL and check for dangerous patterns
-                        if not self.is_valid_url(url):
+                        if not self.is_valid_url(real_url):
+                            log.debug(f"Regex fallback invalid URL, returning text: {text}")
                             return text
                         
                         dangerous_patterns = [
@@ -422,19 +430,25 @@ class EmailNews(commands.Cog):
                             r'email.*preferences', r'update.*preferences'
                         ]
                         
-                        is_dangerous = any(re.search(pattern, url.lower()) for pattern in dangerous_patterns)
+                        is_dangerous = any(re.search(pattern, real_url.lower()) for pattern in dangerous_patterns)
+                        log.debug(f"Regex fallback dangerous check: {is_dangerous}")
                         
-                        if 'reading' in url.lower() and 'time' in url.lower():
+                        if 'reading' in real_url.lower() and 'time' in real_url.lower():
                             is_dangerous = False
+                            log.debug("Regex fallback reading time link allowed")
                         
                         if is_dangerous:
+                            log.debug(f"Regex fallback dangerous link replaced with text: {text}")
                             return text
                         else:
-                            # Use Discord markdown format for clickable links
-                            if text and text != url and len(text) < 100:
-                                return f"[{text}]({url})"
+                            # Use Discord markdown format for clickable links with real URL
+                            if text and text != url and text != real_url and len(text) < 100:
+                                markdown_link = f"[{text}]({real_url})"
+                                log.debug(f"Regex fallback created markdown link: {markdown_link}")
+                                return markdown_link
                             else:
-                                return url
+                                log.debug(f"Regex fallback replaced with real URL: {real_url}")
+                                return real_url
                     
                     return match.group(0)
                 
