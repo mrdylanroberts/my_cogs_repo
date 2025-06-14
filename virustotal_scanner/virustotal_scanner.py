@@ -21,6 +21,128 @@ import logging
 
 log = logging.getLogger("red.my-cogs-repo.virustotal_scanner")
 
+class VirusTotalPaginationView(discord.ui.View):
+    """Persistent pagination view for VirusTotal scan results."""
+    
+    def __init__(self, embeds: List[discord.Embed], timeout: float = None):
+        super().__init__(timeout=timeout)  # None = persistent view
+        self.embeds = embeds
+        self.current_page = 0
+        self.max_pages = len(embeds)
+        
+        # Add numbered buttons for pages (up to 5 pages)
+        if self.max_pages <= 5:
+            for i in range(self.max_pages):
+                button = discord.ui.Button(
+                    label=str(i + 1),
+                    emoji=f"{i + 1}️⃣",
+                    style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary,
+                    custom_id=f"vt_page_{i}_{id(self)}"
+                )
+                button.callback = self.create_page_callback(i)
+                self.add_item(button)
+        else:
+            # For more than 5 pages, use previous/next buttons
+            prev_button = discord.ui.Button(
+                label='Previous',
+                style=discord.ButtonStyle.secondary,
+                emoji='⬅️',
+                custom_id=f'vt_previous_{id(self)}'
+            )
+            prev_button.callback = self.previous_callback
+            self.add_item(prev_button)
+            
+            next_button = discord.ui.Button(
+                label='Next',
+                style=discord.ButtonStyle.secondary,
+                emoji='➡️',
+                custom_id=f'vt_next_{id(self)}'
+            )
+            next_button.callback = self.next_callback
+            self.add_item(next_button)
+    
+    def create_page_callback(self, page_num: int):
+        async def callback(interaction: discord.Interaction):
+            try:
+                await self.go_to_page(interaction, page_num)
+            except Exception as e:
+                log.error(f"Error in page callback for page {page_num}: {e}", exc_info=True)
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message("❌ An error occurred while changing pages.", ephemeral=True)
+                    else:
+                        await interaction.followup.send("❌ An error occurred while changing pages.", ephemeral=True)
+                except Exception:
+                    pass
+        return callback
+    
+    async def previous_callback(self, interaction: discord.Interaction):
+        try:
+            if self.current_page > 0:
+                await self.go_to_page(interaction, self.current_page - 1)
+            else:
+                if not interaction.response.is_done():
+                    await interaction.response.defer()
+        except Exception as e:
+            log.error(f"Error in previous callback: {e}", exc_info=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred while navigating.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ An error occurred while navigating.", ephemeral=True)
+            except Exception:
+                pass
+    
+    async def next_callback(self, interaction: discord.Interaction):
+        try:
+            if self.current_page < self.max_pages - 1:
+                await self.go_to_page(interaction, self.current_page + 1)
+            else:
+                if not interaction.response.is_done():
+                    await interaction.response.defer()
+        except Exception as e:
+            log.error(f"Error in next callback: {e}", exc_info=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred while navigating.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ An error occurred while navigating.", ephemeral=True)
+            except Exception:
+                pass
+    
+    async def go_to_page(self, interaction: discord.Interaction, page: int):
+        try:
+            if 0 <= page < self.max_pages:
+                self.current_page = page
+                
+                # Update button styles for numbered buttons
+                if self.max_pages <= 5:
+                    for i, item in enumerate(self.children):
+                        if isinstance(item, discord.ui.Button) and item.custom_id and "vt_page_" in item.custom_id:
+                            item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
+                
+                if not interaction.response.is_done():
+                    await interaction.response.edit_message(embed=self.embeds[page], view=self)
+                else:
+                    await interaction.edit_original_response(embed=self.embeds[page], view=self)
+        except Exception as e:
+            log.error(f"Error in go_to_page for page {page}: {e}", exc_info=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred while changing pages.", ephemeral=True)
+                else:
+                    await interaction.followup.send("❌ An error occurred while changing pages.", ephemeral=True)
+            except Exception:
+                pass
+    
+    async def on_timeout(self):
+        # This won't be called for persistent views (timeout=None)
+        try:
+            for item in self.children:
+                item.disabled = True
+        except Exception as e:
+            log.error(f"Error in on_timeout: {e}", exc_info=True)
+
 class VirusTotalScanner(commands.Cog):
     """Automatically scan URLs and file attachments using VirusTotal API."""
 
@@ -45,6 +167,7 @@ class VirusTotalScanner(commands.Cog):
             "notify_admins": True,  # Notify admins of malicious content
             "admin_channel": None,  # Channel ID for admin notifications
             "scan_delay": 2,  # Delay between scans to respect rate limits
+            "pending_file_scans": {},  # Track pending file scans {scan_id: {channel_id, message_id, filename, timestamp}}
         }
         
         self.config.register_guild(**default_guild)
@@ -65,16 +188,26 @@ class VirusTotalScanner(commands.Cog):
         self.last_scan_time = 0
         self.scan_queue = asyncio.Queue()
         self.scanning = False
+        
+        # File scan result checking
+        self.file_check_task = None
 
     async def cog_load(self):
-        """Start the scan queue processor when cog loads."""
+        """Start the scan queue processor and file check task when cog loads."""
         if not self.scanning:
             self.bot.loop.create_task(self.process_scan_queue())
             self.scanning = True
+        
+        if not self.file_check_task:
+            self.file_check_task = self.bot.loop.create_task(self.check_pending_file_scans())
 
     async def cog_unload(self):
         """Stop scanning when cog unloads."""
         self.scanning = False
+        
+        if self.file_check_task:
+            self.file_check_task.cancel()
+            self.file_check_task = None
 
     async def initialize_encryption(self, guild_id: int):
         """Initialize encryption key using guild ID as salt (optional)."""
@@ -144,10 +277,79 @@ class VirusTotalScanner(commands.Cog):
                     # Rate limiting - VirusTotal free API allows 4 requests per minute
                     await asyncio.sleep(15)  # 15 seconds between requests
                 else:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(5)
             except Exception as e:
                 log.error(f"Error in scan queue processor: {e}", exc_info=True)
                 await asyncio.sleep(5)
+
+    async def check_pending_file_scans(self):
+        """Periodically check for results of pending file scans."""
+        while True:
+            try:
+                for guild in self.bot.guilds:
+                    guild_config = self.config.guild(guild)
+                    pending_scans = await guild_config.pending_file_scans()
+                    
+                    if not pending_scans:
+                        continue
+                    
+                    api_key = await self.get_api_key(guild)
+                    if not api_key:
+                        continue
+                    
+                    scans_to_remove = []
+                    
+                    for scan_id, scan_info in pending_scans.items():
+                        # Check if scan is older than 10 minutes (timeout)
+                        if time.time() - scan_info.get('timestamp', 0) > 600:
+                            scans_to_remove.append(scan_id)
+                            continue
+                        
+                        # Check for scan results
+                        async with aiohttp.ClientSession() as session:
+                            report_params = {
+                                'apikey': api_key,
+                                'resource': scan_id
+                            }
+                            
+                            async with session.get(self.vt_file_report, params=report_params) as response:
+                                if response.status == 200:
+                                    data = await response.json()
+                                    if data.get('response_code') == 1:
+                                        # Results available, send them
+                                        channel = guild.get_channel(scan_info['channel_id'])
+                                        if channel:
+                                            # Create fake attachment for processing
+                                            class FakeAttachment:
+                                                def __init__(self, filename, size=0):
+                                                    self.filename = filename
+                                                    self.size = size
+                                            
+                                            fake_attachment = FakeAttachment(scan_info['filename'])
+                                            
+                                            # Create a fake message for context
+                                            try:
+                                                message = await channel.fetch_message(scan_info['message_id'])
+                                                await self.process_file_report(data, fake_attachment, message)
+                                            except discord.NotFound:
+                                                # Original message was deleted, send to channel anyway
+                                                embed = await self.create_file_report_embed(data, fake_attachment)
+                                                await channel.send(embed=embed)
+                                        
+                                        scans_to_remove.append(scan_id)
+                    
+                    # Remove completed/expired scans
+                    if scans_to_remove:
+                        for scan_id in scans_to_remove:
+                            del pending_scans[scan_id]
+                        await guild_config.pending_file_scans.set(pending_scans)
+                
+                # Wait 30 seconds before checking again
+                await asyncio.sleep(30)
+                
+            except Exception as e:
+                log.error(f"Error in file scan checker: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait longer on error
 
     @commands.group(name="virustotal", aliases=["vt"])
     @commands.guild_only()
@@ -423,13 +625,30 @@ class VirusTotalScanner(commands.Cog):
                     log.error(f"VirusTotal file scan failed: {response.status}")
                     return
                     
-                # File submitted, will need to check later for results
-                embed = discord.Embed(
-                    title="🔍 File Scan Submitted",
-                    description=f"File `{attachment.filename}` has been submitted to VirusTotal for scanning. Results will be available shortly.",
-                    color=discord.Color.orange()
-                )
-                await message.channel.send(embed=embed)
+                scan_response = await response.json()
+                scan_id = scan_response.get('scan_id')
+                
+                if scan_id:
+                    # Store pending scan for later checking
+                    guild_config = self.config.guild(message.guild)
+                    pending_scans = await guild_config.pending_file_scans()
+                    pending_scans[scan_id] = {
+                        'channel_id': message.channel.id,
+                        'message_id': message.id,
+                        'filename': attachment.filename,
+                        'timestamp': time.time()
+                    }
+                    await guild_config.pending_file_scans.set(pending_scans)
+                    
+                    # File submitted, will need to check later for results
+                    embed = discord.Embed(
+                        title="🔍 File Scan Submitted",
+                        description=f"File `{attachment.filename}` has been submitted to VirusTotal for scanning. Results will be available shortly.",
+                        color=discord.Color.orange()
+                    )
+                    await message.channel.send(embed=embed)
+                else:
+                    log.error("No scan_id received from VirusTotal file scan")
 
     async def process_url_report(self, data: Dict, url: str, message: discord.Message):
         """Process and display URL scan results."""
@@ -440,6 +659,7 @@ class VirusTotalScanner(commands.Cog):
         total = data.get('total', 0)
         scan_date = data.get('scan_date', 'Unknown')
         permalink = data.get('permalink', '')
+        scans = data.get('scans', {})
         
         # Determine threat level
         if positives == 0:
@@ -452,23 +672,88 @@ class VirusTotalScanner(commands.Cog):
             color = discord.Color.red()
             status = "🚨 Malicious"
             
-        embed = discord.Embed(
+        # Create main summary embed
+        main_embed = discord.Embed(
             title="🛡️ VirusTotal URL Scan Results",
             color=color,
             timestamp=datetime.now(timezone.utc)
         )
         
-        embed.add_field(name="URL", value=f"```{url[:100]}{'...' if len(url) > 100 else ''}```", inline=False)
-        embed.add_field(name="Status", value=status, inline=True)
-        embed.add_field(name="Detections", value=f"{positives}/{total}", inline=True)
-        embed.add_field(name="Scan Date", value=scan_date, inline=True)
+        main_embed.add_field(name="URL", value=f"```{url[:100]}{'...' if len(url) > 100 else ''}```", inline=False)
+        main_embed.add_field(name="Status", value=status, inline=True)
+        main_embed.add_field(name="Detections", value=f"{positives}/{total}", inline=True)
+        main_embed.add_field(name="Scan Date", value=scan_date, inline=True)
         
         if permalink:
-            embed.add_field(name="Full Report", value=f"[View on VirusTotal]({permalink})", inline=False)
+            main_embed.add_field(name="Full Report", value=f"[View on VirusTotal]({permalink})", inline=False)
             
-        embed.set_footer(text="Powered by VirusTotal")
+        main_embed.set_footer(text="Powered by VirusTotal")
         
-        await message.channel.send(embed=embed)
+        embeds = [main_embed]
+        
+        # If there are detections, create detailed pages
+        if positives > 0 and scans:
+            detected_engines = []
+            clean_engines = []
+            
+            for engine, result in scans.items():
+                if result.get('detected', False):
+                    detected_engines.append((engine, result.get('result', 'Malicious site')))
+                else:
+                    clean_engines.append(engine)
+            
+            # Create detection details pages
+            if detected_engines:
+                # Group detections into pages (10 per page)
+                detection_pages = [detected_engines[i:i+10] for i in range(0, len(detected_engines), 10)]
+                
+                for i, page_detections in enumerate(detection_pages):
+                    embed = discord.Embed(
+                        title=f"🚨 URL Detection Details (Page {i+1}/{len(detection_pages)})",
+                        color=discord.Color.red(),
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    
+                    detection_text = ""
+                    for engine, result in page_detections:
+                        detection_text += f"**{engine}**: {result}\n"
+                    
+                    embed.add_field(
+                        name=f"Detected by {len(page_detections)} engines:",
+                        value=detection_text[:1024],  # Discord field limit
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text="Powered by VirusTotal")
+                    embeds.append(embed)
+            
+            # Create clean engines page if there are many
+            if len(clean_engines) > 20:
+                clean_pages = [clean_engines[i:i+30] for i in range(0, len(clean_engines), 30)]
+                
+                for i, page_engines in enumerate(clean_pages):
+                    embed = discord.Embed(
+                        title=f"✅ Clean URL Results (Page {i+1}/{len(clean_pages)})",
+                        color=discord.Color.green(),
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    
+                    clean_text = ", ".join(page_engines)
+                    embed.add_field(
+                        name=f"Clean by {len(page_engines)} engines:",
+                        value=clean_text[:1024],  # Discord field limit
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text="Powered by VirusTotal")
+                    embeds.append(embed)
+        
+        # Send with pagination if multiple embeds
+        if len(embeds) > 1:
+            view = VirusTotalPaginationView(embeds, timeout=None)
+            await message.channel.send(embed=embeds[0], view=view)
+        else:
+            await message.channel.send(embed=embeds[0])
         
         # Handle malicious content
         if positives >= await self.config.guild(message.guild).min_detections():
@@ -476,6 +761,85 @@ class VirusTotalScanner(commands.Cog):
 
     async def process_file_report(self, data: Dict, attachment: discord.Attachment, message: discord.Message):
         """Process and display file scan results."""
+        positives = data.get('positives', 0)
+        total = data.get('total', 0)
+        scans = data.get('scans', {})
+        
+        # Create main summary embed
+        main_embed = await self.create_file_report_embed(data, attachment)
+        
+        embeds = [main_embed]
+        
+        # If there are detections, create detailed pages
+        if positives > 0 and scans:
+            detected_engines = []
+            clean_engines = []
+            
+            for engine, result in scans.items():
+                if result.get('detected', False):
+                    detected_engines.append((engine, result.get('result', 'Malware')))
+                else:
+                    clean_engines.append(engine)
+            
+            # Create detection details pages
+            if detected_engines:
+                # Group detections into pages (10 per page)
+                detection_pages = [detected_engines[i:i+10] for i in range(0, len(detected_engines), 10)]
+                
+                for i, page_detections in enumerate(detection_pages):
+                    embed = discord.Embed(
+                        title=f"🚨 Detection Details (Page {i+1}/{len(detection_pages)})",
+                        color=discord.Color.red(),
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    
+                    detection_text = ""
+                    for engine, result in page_detections:
+                        detection_text += f"**{engine}**: {result}\n"
+                    
+                    embed.add_field(
+                        name=f"Detected by {len(page_detections)} engines:",
+                        value=detection_text[:1024],  # Discord field limit
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text="Powered by VirusTotal")
+                    embeds.append(embed)
+            
+            # Create clean engines page if there are many
+            if len(clean_engines) > 20:
+                clean_pages = [clean_engines[i:i+30] for i in range(0, len(clean_engines), 30)]
+                
+                for i, page_engines in enumerate(clean_pages):
+                    embed = discord.Embed(
+                        title=f"✅ Clean Results (Page {i+1}/{len(clean_pages)})",
+                        color=discord.Color.green(),
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    
+                    clean_text = ", ".join(page_engines)
+                    embed.add_field(
+                        name=f"Clean by {len(page_engines)} engines:",
+                        value=clean_text[:1024],  # Discord field limit
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text="Powered by VirusTotal")
+                    embeds.append(embed)
+        
+        # Send with pagination if multiple embeds
+        if len(embeds) > 1:
+            view = VirusTotalPaginationView(embeds, timeout=None)
+            await message.channel.send(embed=embeds[0], view=view)
+        else:
+            await message.channel.send(embed=embeds[0])
+        
+        # Handle malicious content
+        if positives >= await self.config.guild(message.guild).min_detections():
+            await self.handle_malicious_content(message, 'File', positives, total)
+
+    async def create_file_report_embed(self, data: Dict, attachment) -> discord.Embed:
+        """Create a file report embed from scan data."""
         positives = data.get('positives', 0)
         total = data.get('total', 0)
         scan_date = data.get('scan_date', 'Unknown')
@@ -502,7 +866,8 @@ class VirusTotalScanner(commands.Cog):
         embed.add_field(name="Filename", value=f"```{attachment.filename}```", inline=False)
         embed.add_field(name="Status", value=status, inline=True)
         embed.add_field(name="Detections", value=f"{positives}/{total}", inline=True)
-        embed.add_field(name="File Size", value=humanize_number(attachment.size) + " bytes", inline=True)
+        if hasattr(attachment, 'size'):
+            embed.add_field(name="File Size", value=humanize_number(attachment.size) + " bytes", inline=True)
         embed.add_field(name="MD5 Hash", value=f"```{md5}```", inline=False)
         embed.add_field(name="Scan Date", value=scan_date, inline=True)
         
@@ -511,11 +876,7 @@ class VirusTotalScanner(commands.Cog):
             
         embed.set_footer(text="Powered by VirusTotal")
         
-        await message.channel.send(embed=embed)
-        
-        # Handle malicious content
-        if positives >= await self.config.guild(message.guild).min_detections():
-            await self.handle_malicious_content(message, 'File', positives, total)
+        return embed
 
     async def handle_malicious_content(self, message: discord.Message, content_type: str, positives: int, total: int):
         """Handle detection of malicious content."""
