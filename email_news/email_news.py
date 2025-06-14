@@ -881,9 +881,11 @@ class EmailNews(commands.Cog):
                                     except (UnicodeDecodeError, AttributeError):
                                         content = "Could not decode email content."
                                 
-                                # If we have HTML content, try to extract better formatted text with inline links
-                                if html_content and len(html_content.strip()) > len(content.strip()):
+                                # If we have HTML content, always use it for better formatting and link extraction
+                                if html_content and html_content.strip():
                                     content = self.convert_html_to_text_with_links(html_content)
+                                elif not content.strip():
+                                    content = "No readable content found in email."
                                 
                                 # Enhance reading time indicators to make them more prominent
                                 content = self.enhance_reading_time_indicators(content)
