@@ -35,51 +35,40 @@ class EmailPaginationView(discord.ui.View):
         self.current_page = 0
         self.max_pages = len(embeds)
         
-        # Add numbered buttons for pages (up to 5 pages)
-        if self.max_pages <= 5:
-            for i in range(self.max_pages):
-                button = discord.ui.Button(
-                    label=str(i + 1),
-                    emoji=f"{i + 1}️⃣",
-                    style=discord.ButtonStyle.primary if i == 0 else discord.ButtonStyle.secondary,
-                    custom_id=f"email_page_{i}_{id(self)}"
-                )
-                button.callback = self.create_page_callback(i)
-                self.add_item(button)
-        else:
-            # For more than 5 pages, use previous/next buttons
-            prev_button = discord.ui.Button(
+        # Only show pagination if there are multiple pages
+        if self.max_pages > 1:
+            # Previous button
+            self.prev_button = discord.ui.Button(
                 label='Previous',
                 style=discord.ButtonStyle.secondary,
                 emoji='⬅️',
+                disabled=True,  # Start disabled since we're on page 1
                 custom_id=f'email_previous_{id(self)}'
             )
-            prev_button.callback = self.previous_callback
-            self.add_item(prev_button)
+            self.prev_button.callback = self.previous_callback
+            self.add_item(self.prev_button)
             
-            next_button = discord.ui.Button(
+            # Page indicator button (non-clickable)
+            self.page_indicator = discord.ui.Button(
+                label=f'Page 1/{self.max_pages}',
+                style=discord.ButtonStyle.primary,
+                disabled=True,  # Non-clickable indicator
+                custom_id=f'email_indicator_{id(self)}'
+            )
+            self.add_item(self.page_indicator)
+            
+            # Next button
+            self.next_button = discord.ui.Button(
                 label='Next',
                 style=discord.ButtonStyle.secondary,
                 emoji='➡️',
+                disabled=self.max_pages <= 1,  # Disabled if only one page
                 custom_id=f'email_next_{id(self)}'
             )
-            next_button.callback = self.next_callback
-            self.add_item(next_button)
+            self.next_button.callback = self.next_callback
+            self.add_item(self.next_button)
     
-    def create_page_callback(self, page_num: int):
-        async def callback(interaction: discord.Interaction):
-            try:
-                await self.go_to_page(interaction, page_num)
-            except Exception as e:
-                log.error(f"Error in page callback for page {page_num}: {e}", exc_info=True)
-                try:
-                    if not interaction.response.is_done():
-                        await interaction.response.send_message("❌ An error occurred while changing pages.", ephemeral=True)
-                    else:
-                        await interaction.followup.send("❌ An error occurred while changing pages.", ephemeral=True)
-                except Exception:
-                    pass
-        return callback
+
     
     async def previous_callback(self, interaction: discord.Interaction):
         try:
@@ -120,11 +109,16 @@ class EmailPaginationView(discord.ui.View):
             if 0 <= page < self.max_pages:
                 self.current_page = page
                 
-                # Update button styles for numbered buttons
-                if self.max_pages <= 5:
-                    for i, item in enumerate(self.children):
-                        if isinstance(item, discord.ui.Button) and item.custom_id and "email_page_" in item.custom_id:
-                            item.style = discord.ButtonStyle.primary if i == page else discord.ButtonStyle.secondary
+                # Update button states and page indicator
+                if self.max_pages > 1:
+                    # Update Previous button state
+                    self.prev_button.disabled = (page == 0)
+                    
+                    # Update Next button state
+                    self.next_button.disabled = (page == self.max_pages - 1)
+                    
+                    # Update page indicator
+                    self.page_indicator.label = f'Page {page + 1}/{self.max_pages}'
                 
                 if not interaction.response.is_done():
                     await interaction.response.edit_message(embed=self.embeds[page], view=self)
