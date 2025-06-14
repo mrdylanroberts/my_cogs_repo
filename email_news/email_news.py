@@ -592,10 +592,10 @@ class EmailNews(commands.Cog):
 
     @emailnews.command(name="setup")
     @commands.admin_or_permissions(manage_guild=True)
-    async def setup_email(self, ctx, account_name: str, email_address: str, password: str, imap_server: str = "imap.gmail.com"):
+    async def setup_email(self, ctx, email_address: str, password: str, imap_server: str = "imap.gmail.com", account_name: str = "default"):
         """Set up email account credentials (encrypted storage).
         
-        Example: `!emailnews setup myaccount user@gmail.com mypassword imap.gmail.com`
+        Example: `!emailnews setup user@gmail.com mypassword imap.gmail.com`
         
         Note: Use app-specific passwords for Gmail.
         """
