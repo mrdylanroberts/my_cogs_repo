@@ -43,11 +43,10 @@ class GlossaryView(discord.ui.View):
             )
         else:
             for term, definition in self.entries[start_idx:end_idx]:
-                # Truncate long definitions for display
-                display_def = definition[:200] + "..." if len(definition) > 200 else definition
+                # Format: title (shown) abbreviation define (shown) full description (hidden)
                 embed.add_field(
                     name=f"🔹 {term}",
-                    value=display_def,
+                    value=f"**{term}** - ||{definition}||",
                     inline=False
                 )
         
