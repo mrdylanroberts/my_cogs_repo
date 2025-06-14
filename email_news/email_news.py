@@ -202,6 +202,32 @@ class EmailNews(commands.Cog):
         url_pattern = r'https?://[^\s\]\)]+'
         urls = re.findall(url_pattern, content)
         return urls
+    
+    def convert_html_to_text_with_links(self, html_content: str) -> str:
+        """Convert HTML content to text while preserving inline links."""
+        if not html_content:
+            return ""
+        
+        try:
+            # Remove HTML tags but preserve link structure
+            # Convert <a href="url">text</a> to text (url)
+            html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>([^<]+)</a>', 
+                                r'\2 (\1)', html_content, flags=re.IGNORECASE)
+            
+            # Remove other HTML tags
+            html_content = re.sub(r'<[^>]+>', '', html_content)
+            
+            # Decode HTML entities
+            html_content = html.unescape(html_content)
+            
+            # Clean up extra whitespace
+            html_content = re.sub(r'\s+', ' ', html_content)
+            html_content = re.sub(r'\n\s*\n', '\n\n', html_content)
+            
+            return html_content.strip()
+        except Exception as e:
+            log.warning(f"Failed to convert HTML to text: {e}")
+            return html_content
 
     def clean_email_content(self, content: str) -> str:
         """Clean and format email content for Discord while preserving inline links."""
@@ -601,6 +627,8 @@ class EmailNews(commands.Cog):
                             if channel:
                                 log.info(f"Target channel found: {channel.name} ({channel.id})")
                                 content = ""
+                                html_content = ""
+                                
                                 if email_obj.is_multipart():
                                     for part in email_obj.walk():
                                         if part.get_content_type() == "text/plain":
@@ -608,12 +636,20 @@ class EmailNews(commands.Cog):
                                                 content = part.get_payload(decode=True).decode('utf-8', errors='replace')
                                             except (UnicodeDecodeError, AttributeError):
                                                 content = "Could not decode email content."
-                                            break
+                                        elif part.get_content_type() == "text/html":
+                                            try:
+                                                html_content = part.get_payload(decode=True).decode('utf-8', errors='replace')
+                                            except (UnicodeDecodeError, AttributeError):
+                                                html_content = ""
                                 else:
                                     try:
                                         content = email_obj.get_payload(decode=True).decode('utf-8', errors='replace')
                                     except (UnicodeDecodeError, AttributeError):
                                         content = "Could not decode email content."
+                                
+                                # If we have HTML content, try to extract better formatted text with inline links
+                                if html_content and len(html_content.strip()) > len(content.strip()):
+                                    content = self.convert_html_to_text_with_links(html_content)
                                 
                                 # Clean and process the content
                                 cleaned_content = self.clean_email_content(content)
