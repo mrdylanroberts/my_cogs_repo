@@ -512,31 +512,34 @@ class VirusTotalScanner(commands.Cog):
         if blacklist and message.channel.id in blacklist:
             return
             
+        # Collect URLs and files from the same message for unified processing
+        urls = []
+        files = []
+        
         # Scan URLs in message content
         if await guild_config.scan_urls():
             urls = self.url_pattern.findall(message.content)
-            if urls:
-                # Process all URLs from the same message together
-                scan_data = {
-                    'type': 'url_batch',
-                    'target': urls,
-                    'message': message,
-                    'api_key': api_key
-                }
-                await self.scan_queue.put(scan_data)
+            log.debug(f"Found {len(urls)} URLs in message: {urls}")
                 
         # Scan file attachments
         if await guild_config.scan_files() and message.attachments:
             for attachment in message.attachments:
                 # Only scan files under 32MB (VirusTotal limit)
                 if attachment.size <= 32 * 1024 * 1024:
-                    scan_data = {
-                        'type': 'file',
-                        'target': attachment,
-                        'message': message,
-                        'api_key': api_key
-                    }
-                    await self.scan_queue.put(scan_data)
+                    files.append(attachment)
+            log.debug(f"Found {len(files)} files in message: {[f.filename for f in files]}")
+        
+        # Process URLs and files together if any are found
+        if urls or files:
+            scan_data = {
+                'type': 'mixed_batch',
+                'urls': urls,
+                'files': files,
+                'message': message,
+                'api_key': api_key
+            }
+            log.debug(f"Adding mixed batch to scan queue: {len(urls)} URLs, {len(files)} files")
+            await self.scan_queue.put(scan_data)
 
     async def perform_scan(self, scan_data: Dict):
         """Perform the actual scan based on scan data."""
@@ -547,6 +550,8 @@ class VirusTotalScanner(commands.Cog):
                 await self.scan_url_batch(scan_data)
             elif scan_data['type'] == 'file':
                 await self.scan_file(scan_data)
+            elif scan_data['type'] == 'mixed_batch':
+                await self.scan_mixed_batch(scan_data)
         except Exception as e:
             log.error(f"Error performing scan: {e}", exc_info=True)
 
@@ -626,6 +631,138 @@ class VirusTotalScanner(commands.Cog):
         # Process all results together with pagination
         if url_results or failed_urls:
             await self.process_url_batch_results(url_results, message, failed_urls)
+
+    async def scan_mixed_batch(self, scan_data: Dict):
+        """Scan both URLs and files from the same message and combine results."""
+        urls = scan_data['urls']
+        files = scan_data['files']
+        message = scan_data['message']
+        api_key = scan_data['api_key']
+        
+        url_results = []
+        file_results = []
+        failed_urls = []
+        failed_files = []
+        
+        # Scan URLs if any
+        if urls:
+            log.debug(f"Scanning {len(urls)} URLs in mixed batch")
+            async with aiohttp.ClientSession() as session:
+                for i, url in enumerate(urls):
+                    try:
+                        # Add delay between requests to avoid rate limiting
+                        if i > 0:
+                            await asyncio.sleep(2)
+                        
+                        # First, submit URL for scanning
+                        scan_params = {
+                            'apikey': api_key,
+                            'url': url
+                        }
+                        
+                        async with session.post(self.vt_url_scan, data=scan_params) as response:
+                            if response.status == 204:  # Rate limit exceeded
+                                log.warning(f"Rate limit exceeded for URL {url}, waiting longer...")
+                                await asyncio.sleep(10)
+                                continue
+                            elif response.status != 200:
+                                log.error(f"VirusTotal URL scan failed for {url}: {response.status}")
+                                failed_urls.append(url)
+                                continue
+                        
+                        # Wait for scan to complete
+                        await asyncio.sleep(8)
+                        
+                        # Retrieve the report with retry logic
+                        for attempt in range(3):
+                            report_params = {
+                                'apikey': api_key,
+                                'resource': url
+                            }
+                            
+                            async with session.get(self.vt_url_report, params=report_params) as response:
+                                if response.status != 200:
+                                    log.error(f"VirusTotal URL report failed for {url}: {response.status}")
+                                    if attempt == 2:
+                                        failed_urls.append(url)
+                                    continue
+                                
+                                data = await response.json()
+                                
+                                if data.get('response_code') == 1:
+                                    url_results.append((url, data))
+                                    break
+                                elif data.get('response_code') == -2:
+                                    if attempt < 2:
+                                        log.warning(f"URL {url} still queued, waiting...")
+                                        await asyncio.sleep(5)
+                                        continue
+                                    else:
+                                        log.warning(f"URL {url} still queued after multiple attempts")
+                                        failed_urls.append(url)
+                                        break
+                                else:
+                                    log.warning(f"No report available for URL {url}")
+                                    failed_urls.append(url)
+                                    break
+                    
+                    except Exception as e:
+                        log.error(f"Error scanning URL {url}: {e}")
+                        failed_urls.append(url)
+        
+        # Scan files if any
+        if files:
+            log.debug(f"Scanning {len(files)} files in mixed batch")
+            for attachment in files:
+                try:
+                    # Download and scan the file
+                    file_data = await attachment.read()
+                    file_hash = hashlib.sha256(file_data).hexdigest()
+                    
+                    async with aiohttp.ClientSession() as session:
+                        # Check if we already have a report for this file
+                        report_params = {
+                            'apikey': api_key,
+                            'resource': file_hash
+                        }
+                        
+                        async with session.get(self.vt_file_report, params=report_params) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                if data.get('response_code') == 1:
+                                    file_results.append((attachment, data))
+                                    continue
+                        
+                        # If no existing report, submit file for scanning
+                        form_data = aiohttp.FormData()
+                        form_data.add_field('apikey', api_key)
+                        form_data.add_field('file', file_data, filename=attachment.filename)
+                        
+                        async with session.post(self.vt_file_scan, data=form_data) as response:
+                            if response.status == 200:
+                                # File submitted, wait and check for results
+                                await asyncio.sleep(10)
+                                
+                                # Try to get the report
+                                async with session.get(self.vt_file_report, params=report_params) as response:
+                                    if response.status == 200:
+                                        data = await response.json()
+                                        if data.get('response_code') == 1:
+                                            file_results.append((attachment, data))
+                                        else:
+                                            failed_files.append(attachment.filename)
+                                    else:
+                                        failed_files.append(attachment.filename)
+                            else:
+                                failed_files.append(attachment.filename)
+                
+                except Exception as e:
+                    log.error(f"Error scanning file {attachment.filename}: {e}")
+                    failed_files.append(attachment.filename)
+        
+        # Process combined results
+        if url_results or file_results or failed_urls or failed_files:
+            await self.process_mixed_batch_results(url_results, file_results, message, failed_urls, failed_files)
 
     async def scan_url(self, scan_data: Dict):
         """Scan a single URL using VirusTotal API (for manual scans)."""
@@ -786,6 +923,181 @@ class VirusTotalScanner(commands.Cog):
         if malicious_urls:
             for url, data in malicious_urls:
                 await self.handle_malicious_content(message, 'URL', data.get('positives', 0), data.get('total', 0))
+
+    async def process_mixed_batch_results(self, url_results: List, file_results: List, message: discord.Message, failed_urls: List = None, failed_files: List = None):
+        """Process and display combined URL and file scan results with pagination."""
+        if failed_urls is None:
+            failed_urls = []
+        if failed_files is None:
+            failed_files = []
+            
+        embeds = []
+        
+        # Create summary embed
+        total_scanned = len(url_results) + len(file_results)
+        total_failed = len(failed_urls) + len(failed_files)
+        
+        summary_embed = discord.Embed(
+            title="🛡️ VirusTotal Scan Results Summary",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        
+        # Summary text
+        summary_parts = []
+        if url_results:
+            summary_parts.append(f"**URLs:** {len(url_results)} scanned")
+        if file_results:
+            summary_parts.append(f"**Files:** {len(file_results)} scanned")
+        if failed_urls:
+            summary_parts.append(f"**Failed URLs:** {len(failed_urls)}")
+        if failed_files:
+            summary_parts.append(f"**Failed Files:** {len(failed_files)}")
+            
+        summary_embed.description = "\n".join(summary_parts)
+        
+        # Calculate statistics for URLs
+        url_clean = url_suspicious = url_malicious = 0
+        for _, data in url_results:
+            positives = data.get('positives', 0)
+            if positives == 0:
+                url_clean += 1
+            elif positives <= 3:
+                url_suspicious += 1
+            else:
+                url_malicious += 1
+        
+        # Calculate statistics for files
+        file_clean = file_suspicious = file_malicious = 0
+        for _, data in file_results:
+            positives = data.get('positives', 0)
+            if positives == 0:
+                file_clean += 1
+            elif positives <= 3:
+                file_suspicious += 1
+            else:
+                file_malicious += 1
+        
+        # Combined statistics
+        total_clean = url_clean + file_clean
+        total_suspicious = url_suspicious + file_suspicious
+        total_malicious = url_malicious + file_malicious
+        
+        stats_text = f"✅ Clean: {total_clean}\n⚠️ Suspicious: {total_suspicious}\n🚨 Malicious: {total_malicious}"
+        if total_failed > 0:
+            stats_text += f"\n❌ Failed: {total_failed}"
+        summary_embed.add_field(name="Statistics", value=stats_text, inline=True)
+        
+        summary_embed.set_footer(text="Powered by VirusTotal • Use navigation buttons for detailed results")
+        embeds.append(summary_embed)
+        
+        # Create detailed embeds for URLs
+        for i, (url, data) in enumerate(url_results, 1):
+            positives = data.get('positives', 0)
+            total = data.get('total', 0)
+            scan_date = data.get('scan_date', 'Unknown')
+            permalink = data.get('permalink', '')
+            scans = data.get('scans', {})
+            
+            # Determine threat level
+            if positives == 0:
+                color = discord.Color.green()
+                status = "✅ Clean"
+            elif positives <= 3:
+                color = discord.Color.orange()
+                status = "⚠️ Suspicious"
+            else:
+                color = discord.Color.red()
+                status = "🚨 Malicious"
+            
+            embed = discord.Embed(
+                title=f"🔗 URL Scan Results (#{i})",
+                description=f"**URL:** {url}\n**Status:** {status}\n**Detections:** {positives}/{total}",
+                color=color,
+                timestamp=datetime.utcnow()
+            )
+            
+            if scan_date != 'Unknown':
+                embed.add_field(name="Scan Date", value=scan_date, inline=True)
+            
+            if permalink:
+                embed.add_field(name="VirusTotal Report", value=f"[View Full Report]({permalink})", inline=True)
+            
+            # Add detection details if any
+            if positives > 0 and scans:
+                detected_engines = [engine for engine, result in scans.items() if result.get('detected', False)]
+                if detected_engines:
+                    detection_text = "\n".join(detected_engines[:10])  # Limit to first 10
+                    if len(detected_engines) > 10:
+                        detection_text += f"\n... and {len(detected_engines) - 10} more"
+                    embed.add_field(name="Detected by", value=detection_text, inline=False)
+            
+            embed.set_footer(text="Powered by VirusTotal")
+            embeds.append(embed)
+        
+        # Create detailed embeds for files
+        for i, (attachment, data) in enumerate(file_results, 1):
+            positives = data.get('positives', 0)
+            total = data.get('total', 0)
+            scan_date = data.get('scan_date', 'Unknown')
+            permalink = data.get('permalink', '')
+            scans = data.get('scans', {})
+            
+            # Determine threat level
+            if positives == 0:
+                color = discord.Color.green()
+                status = "✅ Clean"
+            elif positives <= 3:
+                color = discord.Color.orange()
+                status = "⚠️ Suspicious"
+            else:
+                color = discord.Color.red()
+                status = "🚨 Malicious"
+            
+            embed = discord.Embed(
+                title=f"📁 File Scan Results (#{i})",
+                description=f"**File:** {attachment.filename}\n**Status:** {status}\n**Detections:** {positives}/{total}",
+                color=color,
+                timestamp=datetime.utcnow()
+            )
+            
+            embed.add_field(name="File Size", value=f"{attachment.size:,} bytes", inline=True)
+            
+            if scan_date != 'Unknown':
+                embed.add_field(name="Scan Date", value=scan_date, inline=True)
+            
+            if permalink:
+                embed.add_field(name="VirusTotal Report", value=f"[View Full Report]({permalink})", inline=True)
+            
+            # Add detection details if any
+            if positives > 0 and scans:
+                detected_engines = [engine for engine, result in scans.items() if result.get('detected', False)]
+                if detected_engines:
+                    detection_text = "\n".join(detected_engines[:10])  # Limit to first 10
+                    if len(detected_engines) > 10:
+                        detection_text += f"\n... and {len(detected_engines) - 10} more"
+                    embed.add_field(name="Detected by", value=detection_text, inline=False)
+            
+            embed.set_footer(text="Powered by VirusTotal")
+            embeds.append(embed)
+        
+        # Send embeds with pagination if more than one
+        if len(embeds) > 1:
+            view = VirusTotalPaginationView(embeds)
+            await message.channel.send(embed=embeds[0], view=view)
+        else:
+            await message.channel.send(embed=embeds[0])
+        
+        # Handle malicious content if any
+        min_detections = await self.config.guild(message.guild).min_detections()
+        malicious_urls = [(url, data) for url, data in url_results if data.get('positives', 0) >= min_detections]
+        malicious_files = [(attachment, data) for attachment, data in file_results if data.get('positives', 0) >= min_detections]
+        
+        for url, data in malicious_urls:
+            await self.handle_malicious_content(message, 'URL', data.get('positives', 0), data.get('total', 0))
+        
+        for attachment, data in malicious_files:
+            await self.handle_malicious_content(message, 'File', data.get('positives', 0), data.get('total', 0))
 
     async def scan_file(self, scan_data: Dict):
         """Scan a file attachment using VirusTotal API."""
