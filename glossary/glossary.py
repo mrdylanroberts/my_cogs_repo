@@ -512,6 +512,12 @@ class Glossary(commands.Cog):
             inline=False
         )
         
+        embed.add_field(
+            name="Reset Glossary",
+            value="`!glossary reset`\nReset to default cybersecurity terms (68+ definitions)",
+            inline=False
+        )
+        
         await ctx.send(embed=embed)
     
     @glossary.command(name="stats")
@@ -540,6 +546,21 @@ class Glossary(commands.Cog):
                                   reverse=True)[:3]
             recent_text = "\n".join([f"• {term}" for term, _ in recent_pending])
             embed.add_field(name="🆕 Recent Submissions", value=recent_text, inline=False)
+        
+        await ctx.send(embed=embed)
+    
+    @glossary.command(name="reset")
+    @commands.has_permissions(administrator=True)
+    async def reset_glossary(self, ctx: commands.Context):
+        """Reset glossary to default terms (Administrators only)."""
+        # Reset to default terms
+        await self.config.guild(ctx.guild).terms.set(self.default_terms.copy())
+        
+        embed = discord.Embed(
+            title="🔄 Glossary Reset",
+            description=f"Successfully reset glossary to default terms!\n\n📚 **{len(self.default_terms)} terms** loaded",
+            color=0x00ff00
+        )
         
         await ctx.send(embed=embed)
     
