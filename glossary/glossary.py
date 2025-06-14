@@ -22,8 +22,22 @@ class GlossaryView(discord.ui.View):
         self.per_page = per_page
         self.current_page = 0
         self.max_pages = (len(entries) - 1) // per_page + 1 if entries else 1
+        self.message = None  # Store the message for timeout handling
         # Update button states after initialization
         self.update_buttons()
+    
+    async def on_timeout(self):
+        """Handle view timeout by disabling all buttons."""
+        for item in self.children:
+            item.disabled = True
+        
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.NotFound:
+                pass  # Message was deleted
+            except discord.HTTPException:
+                pass  # Other Discord API errors
         
     def get_page_embed(self) -> discord.Embed:
         """Generate embed for current page."""
@@ -67,40 +81,65 @@ class GlossaryView(discord.ui.View):
     
     @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary)
     async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page > 0:
-            self.current_page -= 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.get_page_embed(), view=self)
-        else:
-            await interaction.response.defer()
+        try:
+            if self.current_page > 0:
+                self.current_page -= 1
+                self.update_buttons()
+                await interaction.response.edit_message(embed=self.get_page_embed(), view=self)
+            else:
+                await interaction.response.defer()
+        except discord.HTTPException:
+            pass  # Interaction failed, but we can't do much about it
     
     @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.primary, disabled=True)
     async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button):
         # This button is just for display, no action needed
-        await interaction.response.defer()
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            pass  # Interaction failed, but we can't do much about it
     
     @discord.ui.button(label="▶️ Next", style=discord.ButtonStyle.secondary)
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page < self.max_pages - 1:
-            self.current_page += 1
-            self.update_buttons()
-            await interaction.response.edit_message(embed=self.get_page_embed(), view=self)
-        else:
-            await interaction.response.defer()
+        try:
+            if self.current_page < self.max_pages - 1:
+                self.current_page += 1
+                self.update_buttons()
+                await interaction.response.edit_message(embed=self.get_page_embed(), view=self)
+            else:
+                await interaction.response.defer()
+        except discord.HTTPException:
+            pass  # Interaction failed, but we can't do much about it
     
     @discord.ui.button(label="➕ Add", style=discord.ButtonStyle.success)
     async def add_term(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "Use `!glossary add <term> <definition>` to add new terms to the glossary!",
-            ephemeral=True
-        )
+        try:
+            await interaction.response.send_message(
+                "Use `!glossary add <term> <definition>` to add new terms to the glossary!",
+                ephemeral=True
+            )
+        except discord.InteractionResponded:
+            await interaction.followup.send(
+                "Use `!glossary add <term> <definition>` to add new terms to the glossary!",
+                ephemeral=True
+            )
+        except discord.HTTPException:
+            pass  # Interaction failed, but we can't do much about it
     
     @discord.ui.button(label="🔍 Search", style=discord.ButtonStyle.primary)
     async def search_terms(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(
-            "Use `!glossary search <term>` to search for specific terms!",
-            ephemeral=True
-        )
+        try:
+            await interaction.response.send_message(
+                "Use `!glossary search <term>` to search for specific terms!",
+                ephemeral=True
+            )
+        except discord.InteractionResponded:
+            await interaction.followup.send(
+                "Use `!glossary search <term>` to search for specific terms!",
+                ephemeral=True
+            )
+        except discord.HTTPException:
+            pass  # Interaction failed, but we can't do much about it
 
 
 class Glossary(commands.Cog):
@@ -246,7 +285,8 @@ class Glossary(commands.Cog):
         if search_term:
             embed.title += f" - Search: '{search_term}'"
         
-        await ctx.send(embed=embed, view=view)
+        message = await ctx.send(embed=embed, view=view)
+        view.message = message  # Store message reference for timeout handling
     
     @glossary.command(name="search")
     async def search_glossary(self, ctx: commands.Context, *, search_term: str):
