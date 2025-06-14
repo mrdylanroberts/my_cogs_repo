@@ -281,26 +281,16 @@ class EmailNews(commands.Cog):
                     if any(prop in style.lower() for prop in ['display:none', 'display: none', 'max-height:0', 'max-height: 0', 'overflow:hidden', 'overflow: hidden']):
                         element.decompose()
                 
-                # Filter out dangerous links
+                # Filter out dangerous links - be more specific to avoid filtering legitimate content
                 dangerous_patterns = [
                     r'unsubscribe',
                     r'manage.*subscription',
                     r'email.*forward',
                     r'opt.*out',
-                    r'utm_',
-                    r'tracking',
-                    r'analytics',
-                    r'pixel',
-                    r'beacon',
-                    r'email.*track',
-                    r'open.*track',
-                    r'click.*track',
-                    r'mailtrack',
-                    r'emailtrack',
-                    r'bit\.ly',
-                    r'tinyurl',
-                    r'short',
-                    r'redirect'
+                    r'web-version',
+                    r'view.*online',
+                    r'email.*preferences',
+                    r'update.*preferences'
                 ]
                 
                 # Convert links to text format with filtering
@@ -371,7 +361,7 @@ class EmailNews(commands.Cog):
                         
                         dangerous_patterns = [
                             r'unsubscribe', r'manage.*subscription', r'email.*forward', r'opt.*out',
-                            r'utm_', r'tracking', r'analytics', r'pixel', r'beacon'
+                            r'web-version', r'view.*online', r'email.*preferences', r'update.*preferences'
                         ]
                         
                         is_dangerous = any(re.search(pattern, url.lower()) for pattern in dangerous_patterns)
