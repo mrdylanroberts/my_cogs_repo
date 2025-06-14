@@ -571,6 +571,10 @@ class Glossary(commands.Cog):
         )
         
         await ctx.send(embed=embed)
+        
+        # Auto-refresh the glossary to show the reset terms
+        await asyncio.sleep(1)  # Brief pause for better UX
+        await self.show_glossary(ctx)
     
     @glossary.command(name="export")
     @commands.has_permissions(manage_messages=True)
