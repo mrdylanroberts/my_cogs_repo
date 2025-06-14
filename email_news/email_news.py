@@ -421,11 +421,22 @@ class EmailNews(commands.Cog):
                 def replace_link(match):
                     full_tag = match.group(0)
                     href_match = re.search(r'href=["\']([^"\'>]+)["\']', full_tag, re.IGNORECASE)
-                    text_match = re.search(r'>([^<]*)<', full_tag)
                     
                     if href_match:
                         url = href_match.group(1)
-                        text = text_match.group(1).strip() if text_match else url
+                        
+                        # Extract content between <a> tags, handling nested elements
+                        content_match = re.search(r'<a[^>]*>(.*?)</a>', full_tag, re.DOTALL | re.IGNORECASE)
+                        if content_match:
+                            full_content = content_match.group(1)
+                            # Remove HTML tags and clean up
+                            import html as html_module
+                            clean_text = re.sub(r'<[^>]+>', '', full_content)
+                            clean_text = html_module.unescape(clean_text.strip())
+                            # Clean up whitespace
+                            text = re.sub(r'\s+', ' ', clean_text)
+                        else:
+                            text = url
                         
                         # Debug logging
                         log.debug(f"Regex fallback processing link: {url[:100]}... with text: '{text}'")
