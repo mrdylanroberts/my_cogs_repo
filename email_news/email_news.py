@@ -269,13 +269,18 @@ class EmailNews(commands.Cog):
             # Decode HTML entities
             html_content = html.unescape(html_content)
             
-            # Clean up extra whitespace and CSS remnants
-            html_content = re.sub(r'\s+', ' ', html_content)
-            html_content = re.sub(r'\n\s*\n', '\n\n', html_content)
+            # Clean up extra whitespace while preserving structure
+            # First normalize line breaks
+            html_content = re.sub(r'\r\n|\r', '\n', html_content)
             
             # Remove CSS property patterns that might leak through
             html_content = re.sub(r'[a-z-]+:\s*[^;]+;', '', html_content, flags=re.IGNORECASE)
             html_content = re.sub(r'\{[^}]*\}', '', html_content)
+            
+            # Clean up excessive whitespace but preserve paragraph breaks
+            html_content = re.sub(r'[ \t]+', ' ', html_content)  # Multiple spaces/tabs to single space
+            html_content = re.sub(r'\n[ \t]*\n', '\n\n', html_content)  # Clean paragraph breaks
+            html_content = re.sub(r'\n{3,}', '\n\n', html_content)  # Max 2 consecutive newlines
             
             return html_content.strip()
         except Exception as e:
