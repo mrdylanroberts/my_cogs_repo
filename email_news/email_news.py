@@ -361,7 +361,18 @@ class EmailNews(commands.Cog):
                         link.replace_with(text)
                     else:
                         # Create Discord markdown links for better readability
-                        if text and text != url and text != real_url and len(text) < 100:
+                        # Check if text is descriptive (not just a URL)
+                        is_descriptive_text = (
+                            text and 
+                            not text.startswith(('http://', 'https://')) and
+                            not text.startswith('www.') and
+                            len(text) > 5 and  # Minimum meaningful length
+                            len(text) < 150    # Maximum reasonable length
+                        )
+                        
+                        log.debug(f"Text analysis - descriptive: {is_descriptive_text}, text: '{text}'")
+                        
+                        if is_descriptive_text:
                             # Use Discord markdown format for clickable links with real URL
                             markdown_link = f"[{text}]({real_url})"
                             log.debug(f"Created markdown link: {markdown_link}")
@@ -442,7 +453,18 @@ class EmailNews(commands.Cog):
                             return text
                         else:
                             # Use Discord markdown format for clickable links with real URL
-                            if text and text != url and text != real_url and len(text) < 100:
+                            # Check if text is descriptive (not just a URL)
+                            is_descriptive_text = (
+                                text and 
+                                not text.startswith(('http://', 'https://')) and
+                                not text.startswith('www.') and
+                                len(text) > 5 and  # Minimum meaningful length
+                                len(text) < 150    # Maximum reasonable length
+                            )
+                            
+                            log.debug(f"Regex fallback text analysis - descriptive: {is_descriptive_text}, text: '{text}'")
+                            
+                            if is_descriptive_text:
                                 markdown_link = f"[{text}]({real_url})"
                                 log.debug(f"Regex fallback created markdown link: {markdown_link}")
                                 return markdown_link
