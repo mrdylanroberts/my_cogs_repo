@@ -13,18 +13,36 @@ from datetime import datetime
 import re
 
 
-class GlossaryView(discord.ui.View):
-    """Discord UI View for glossary pagination and interactions."""
+class PersistentGlossaryView(discord.ui.View):
+    """Persistent Discord UI View for glossary pagination and interactions."""
     
-    def __init__(self, entries: List[Tuple[str, str]], per_page: int = 10):
+    def __init__(self, bot: Red = None, guild_id: int = None):
         super().__init__(timeout=None)
-        self.entries = entries
-        self.per_page = per_page
+        self.bot = bot
+        self.guild_id = guild_id
         self.current_page = 0
-        self.max_pages = (len(entries) - 1) // per_page + 1 if entries else 1
-        self.message = None  # Store the message for reference
-        # Update button states after initialization
-        self.update_buttons()
+        self.per_page = 10
+        self.entries = []
+        self.max_pages = 1
+        
+    async def load_glossary_data(self, guild_id: int):
+        """Load glossary data from config."""
+        if not self.bot:
+            return
+        
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            return
+            
+        # Get the glossary cog to access its config
+        glossary_cog = self.bot.get_cog("Glossary")
+        if not glossary_cog:
+            return
+            
+        terms_dict = await glossary_cog.config.guild(guild).terms()
+        self.entries = sorted(terms_dict.items(), key=lambda x: x[0].lower())
+        self.max_pages = (len(self.entries) - 1) // self.per_page + 1 if self.entries else 1
+        self.current_page = min(self.current_page, self.max_pages - 1) if self.max_pages > 0 else 0
         
     def get_page_embed(self) -> discord.Embed:
         """Generate embed for current page."""
@@ -66,9 +84,10 @@ class GlossaryView(discord.ui.View):
             elif hasattr(item, 'label') and 'Next' in str(item.label):
                 item.disabled = self.current_page >= self.max_pages - 1
     
-    @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary, custom_id="glossary:prev")
     async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
+            await self.load_glossary_data(interaction.guild_id)
             if self.current_page > 0:
                 self.current_page -= 1
                 self.update_buttons()
@@ -78,7 +97,7 @@ class GlossaryView(discord.ui.View):
         except discord.HTTPException:
             pass  # Interaction failed, but we can't do much about it
     
-    @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.primary, disabled=True)
+    @discord.ui.button(label="Page 1/1", style=discord.ButtonStyle.primary, disabled=True, custom_id="glossary:page")
     async def page_indicator(self, interaction: discord.Interaction, button: discord.ui.Button):
         # This button is just for display, no action needed
         try:
@@ -86,9 +105,10 @@ class GlossaryView(discord.ui.View):
         except discord.HTTPException:
             pass  # Interaction failed, but we can't do much about it
     
-    @discord.ui.button(label="▶️ Next", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="▶️ Next", style=discord.ButtonStyle.secondary, custom_id="glossary:next")
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
+            await self.load_glossary_data(interaction.guild_id)
             if self.current_page < self.max_pages - 1:
                 self.current_page += 1
                 self.update_buttons()
@@ -98,7 +118,7 @@ class GlossaryView(discord.ui.View):
         except discord.HTTPException:
             pass  # Interaction failed, but we can't do much about it
     
-    @discord.ui.button(label="➕ Add", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="➕ Add", style=discord.ButtonStyle.success, custom_id="glossary:add")
     async def add_term(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
             await interaction.response.send_message(
@@ -113,7 +133,7 @@ class GlossaryView(discord.ui.View):
         except discord.HTTPException:
             pass  # Interaction failed, but we can't do much about it
     
-    @discord.ui.button(label="🔍 Search", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="🔍 Search", style=discord.ButtonStyle.primary, custom_id="glossary:search")
     async def search_terms(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
             await interaction.response.send_message(
@@ -265,15 +285,20 @@ class Glossary(commands.Cog):
             await ctx.send(embed=embed)
             return
         
-        # Create and send view
-        view = GlossaryView(sorted_terms, terms_per_page)
+        # Create persistent view and load data
+        view = PersistentGlossaryView(self.bot, ctx.guild.id)
+        view.entries = sorted_terms
+        view.per_page = terms_per_page
+        view.max_pages = (len(sorted_terms) - 1) // terms_per_page + 1 if sorted_terms else 1
+        view.current_page = 0
+        view.update_buttons()
+        
         embed = view.get_page_embed()
         
         if search_term:
             embed.title += f" - Search: '{search_term}'"
         
-        message = await ctx.send(embed=embed, view=view)
-        view.message = message  # Store message reference for timeout handling
+        await ctx.send(embed=embed, view=view)
     
     @glossary.command(name="search")
     async def search_glossary(self, ctx: commands.Context, *, search_term: str):
@@ -629,4 +654,6 @@ class Glossary(commands.Cog):
 
 async def setup(bot):
     """Setup function for Red-DiscordBot."""
+    # Register persistent view
+    bot.add_view(PersistentGlossaryView(bot))
     await bot.add_cog(Glossary(bot))
