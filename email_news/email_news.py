@@ -364,7 +364,7 @@ class EmailNews(commands.Cog):
                     clean_text = html.unescape(clean_text.strip())
                     
                     # Apply filtering
-                    fake_match = type('Match', (), {'group': lambda i: url if i == 1 else clean_text})()
+                    fake_match = type('Match', (), {'group': lambda self, i: url if i == 1 else clean_text})()
                     return filter_link(fake_match)
                 
                 html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
