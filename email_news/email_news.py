@@ -344,7 +344,8 @@ class EmailNews(commands.Cog):
                         
                         # Remove HTML tags from inner content
                         clean_text = re.sub(r'<[^>]+>', '', inner_content)
-                        clean_text = html.unescape(clean_text.strip())
+                        clean_text = str(clean_text).strip()
+                        clean_text = html.unescape(clean_text)
                         
                         # Apply filtering directly without fake match object
                         # Check if URL contains dangerous patterns
@@ -363,8 +364,14 @@ class EmailNews(commands.Cog):
                         # Return original match if there's an error
                         return match.group(0)
                 
-                html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
-                                    replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
+                # Apply link replacement with proper error handling
+                try:
+                    html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
+                                        replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
+                except Exception as e:
+                    log.warning(f"Error in link replacement: {e}")
+                    # Fallback: just remove anchor tags without conversion
+                    html_content = re.sub(r'<a[^>]*>(.*?)</a>', r'\1', html_content, flags=re.IGNORECASE | re.DOTALL)
                 
                 # Handle table structures - convert to readable text
                 # First add line breaks after table rows for better readability
