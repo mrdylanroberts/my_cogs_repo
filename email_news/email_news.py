@@ -243,7 +243,7 @@ class EmailNews(commands.Cog):
                     r'opt.*out'
                 ]
                 
-                # Convert links to text format with filtering
+                # Convert links to Discord markdown format with filtering
                 for link in soup.find_all('a', href=True):
                     url = link.get('href')
                     text = link.get_text(strip=True)
@@ -255,9 +255,9 @@ class EmailNews(commands.Cog):
                         if is_dangerous:
                             link.replace_with(f"{text} [LINK REMOVED FOR SECURITY]")
                         elif re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                            link.replace_with(f"{text} {url}")
+                            link.replace_with(f"**[{text}]({url})**")
                         else:
-                            link.replace_with(f"{text} ({url})")
+                            link.replace_with(f"[{text}]({url})")
                     else:
                         link.decompose()
                 
