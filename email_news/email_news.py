@@ -509,17 +509,26 @@ class EmailNews(commands.Cog):
         def convert_reading_time_link(match):
             reading_time = match.group(1).strip()
             url = match.group(2).strip()
+            # Extract real URL from tracking URL if needed
+            if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
+                url = self.extract_real_url_from_tracking(url)
             return f'[{reading_time}]({url})'
         
         def convert_title_reading_time_link(match):
             title = match.group(1).strip()
             reading_time = match.group(2).strip()
             url = match.group(3).strip()
+            # Extract real URL from tracking URL if needed
+            if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
+                url = self.extract_real_url_from_tracking(url)
             return f'**[{title}]({url})** {reading_time}'
         
         def convert_to_markdown_link(match):
             text = match.group(1).strip()
             url = match.group(2).strip()
+            # Extract real URL from tracking URL if needed
+            if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
+                url = self.extract_real_url_from_tracking(url)
             return f'[{text}]({url})'
         
         # Apply conversions in order of specificity
