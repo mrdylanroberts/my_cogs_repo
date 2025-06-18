@@ -505,6 +505,10 @@ class EmailNews(commands.Cog):
             text = match.group(1).strip()
             url = match.group(2).strip()
             
+            # Skip if text already contains markdown link formatting (like bold reading time links)
+            if re.search(r'\*\*.*?\]\(.*?\)\*\*', text) or text.startswith('[') or '](' in text:
+                return f'{text} ({url})'
+            
             # Clean up text - remove trailing punctuation that might interfere
             text = re.sub(r'[\s,;:]+$', '', text)
             
