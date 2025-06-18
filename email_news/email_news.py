@@ -463,13 +463,15 @@ class EmailNews(commands.Cog):
         return content
     
     def convert_text_links_to_discord_format(self, content: str) -> str:
-        """Convert text with URLs in parentheses to Discord markdown links."""
+        """Convert text with URLs to Discord markdown links."""
         if not content:
             return content
         
-        # Pattern to find text followed by URL in parentheses
-        # This handles the format: "text (https://example.com)"
-        link_pattern = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
+        # Pattern 1: text followed by URL in parentheses: "text (https://example.com)"
+        link_pattern_parens = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
+        
+        # Pattern 2: text followed by URL with space: "text https://example.com"
+        link_pattern_space = r'([^\n]+?)\s+(https?://[^\s]+)'
         
         def convert_to_markdown_link(match):
             text = match.group(1).strip()
@@ -477,8 +479,9 @@ class EmailNews(commands.Cog):
             # Convert to Discord markdown link format
             return f'[{text}]({url})'
         
-        # Apply the conversion
-        content = re.sub(link_pattern, convert_to_markdown_link, content)
+        # Apply both conversions
+        content = re.sub(link_pattern_parens, convert_to_markdown_link, content)
+        content = re.sub(link_pattern_space, convert_to_markdown_link, content)
         
         return content
     
