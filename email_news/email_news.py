@@ -371,7 +371,7 @@ class EmailNews(commands.Cog):
                     
                     # Check if this is a reading time link
                     if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', clean_text, re.IGNORECASE):
-                        return f"[{clean_text}]({url})"
+                        return f"**[{clean_text}]({url})**"
                     
                     # Convert to Discord markdown format for other safe links
                     return f"[{clean_text}]({url})"
