@@ -413,7 +413,9 @@ class EmailNews(commands.Cog):
                 # Remove common email artifacts and metadata
                 html_content = re.sub(r'From\s+[^\n]*@[^\n]*', '', html_content)
                 html_content = re.sub(r'Date\s+[^\n]*', '', html_content)
+                # Remove pagination text in various formats: "Page X of Y", "(Page X)", "Page X"
                 html_content = re.sub(r'Page \d+ of \d+[^\n]*', '', html_content)
+                html_content = re.sub(r'\(Page \d+\)', '', html_content)
                 
                 # Remove zero-width and invisible characters (same as BeautifulSoup path)
                 invisible_chars = [
