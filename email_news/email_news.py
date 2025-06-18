@@ -572,10 +572,49 @@ class EmailNews(commands.Cog):
         
         return content
 
+    def find_discord_links(self, content: str) -> List[tuple]:
+        """Find all Discord markdown links and their positions in the content."""
+        links = []
+        # Pattern for both regular and bold Discord markdown links
+        pattern = r'(\*\*)?\[([^\]]+)\]\(([^)]+)\)(\*\*)?'
+        
+        for match in re.finditer(pattern, content):
+            start, end = match.span()
+            links.append((start, end))
+        
+        return links
+    
+    def is_split_safe(self, content: str, split_pos: int, links: List[tuple]) -> bool:
+        """Check if splitting at this position would break a Discord markdown link."""
+        for start, end in links:
+            if start < split_pos < end:
+                return False
+        return True
+    
+    def find_safe_split_point(self, content: str, max_pos: int, links: List[tuple]) -> int:
+        """Find a safe position to split content that doesn't break links."""
+        # Start from the max position and work backwards to find a safe split
+        for pos in range(max_pos, 0, -1):
+            if self.is_split_safe(content, pos, links) and content[pos-1] in ' \n\t':
+                return pos
+        
+        # If no safe split found, try to find the end of the nearest link
+        for start, end in links:
+            if start < max_pos < end:
+                # If we're inside a link, move to after the link if possible
+                if end < len(content):
+                    return end
+        
+        # Fallback to original position
+        return max_pos
+    
     def split_content_for_pagination(self, content: str, max_length: int = 1900) -> List[str]:
-        """Split content into chunks for pagination while preserving readability."""
+        """Split content into chunks for pagination while preserving Discord markdown links."""
         if len(content) <= max_length:
             return [content]
+        
+        # Find all Discord markdown links in the content
+        links = self.find_discord_links(content)
         
         chunks = []
         current_chunk = ""
@@ -594,8 +633,23 @@ class EmailNews(commands.Cog):
                 if len(paragraph) > max_length:
                     sentences = re.split(r'(?<=[.!?])\s+', paragraph)
                     for sentence in sentences:
-                        if len(current_chunk) + len(sentence) + 1 > max_length:
+                        potential_length = len(current_chunk) + len(sentence) + 1
+                        if potential_length > max_length:
                             if current_chunk:
+                                # Find the position in the original content
+                                chunk_start = content.find(current_chunk)
+                                if chunk_start != -1:
+                                    chunk_end = chunk_start + len(current_chunk)
+                                    # Check if this split point is safe
+                                    if not self.is_split_safe(content, chunk_end, links):
+                                        # Find a safe split point
+                                        safe_split = self.find_safe_split_point(content, chunk_end, links)
+                                        if safe_split < chunk_end:
+                                            # Adjust the current chunk to the safe split point
+                                            relative_pos = safe_split - chunk_start
+                                            if relative_pos > 0:
+                                                current_chunk = current_chunk[:relative_pos].strip()
+                                
                                 chunks.append(current_chunk.strip())
                                 current_chunk = ""
                         current_chunk += sentence + " "
