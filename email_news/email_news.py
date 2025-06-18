@@ -371,7 +371,7 @@ class EmailNews(commands.Cog):
                     
                     # Check if this is a reading time link
                     if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', clean_text, re.IGNORECASE):
-                        return f"{clean_text} {url}"
+                        return f"[{clean_text}]({url})"
                     
                     # Convert to Discord markdown format for other safe links
                     return f"[{clean_text}]({url})"
@@ -390,8 +390,14 @@ class EmailNews(commands.Cog):
                 for tag in table_tags:
                     html_content = re.sub(f'</?{tag}[^>]*>', '', html_content, flags=re.IGNORECASE)
                 
-                # Add line breaks for block elements
-                block_elements = ['div', 'p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+                # Add line breaks for block elements with better spacing
+                # Headers get double line breaks for better section separation
+                header_elements = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
+                for element in header_elements:
+                    html_content = re.sub(f'</?{element}[^>]*>', '\n\n', html_content, flags=re.IGNORECASE)
+                
+                # Other block elements get single line breaks
+                block_elements = ['div', 'p', 'br']
                 for element in block_elements:
                     html_content = re.sub(f'</?{element}[^>]*>', '\n', html_content, flags=re.IGNORECASE)
                 
@@ -437,6 +443,13 @@ class EmailNews(commands.Cog):
                 # Clean up excessive whitespace but preserve paragraph breaks
                 html_content = re.sub(r'[ \t]+', ' ', html_content)  # Multiple spaces/tabs to single space
                 html_content = re.sub(r'\n[ \t]*\n', '\n\n', html_content)  # Clean paragraph breaks
+                
+                # Add proper spacing before emoji-prefixed sections (like 📱, 🚀, 💻, 🎁)
+                html_content = re.sub(r'\n([📱🚀💻🎁][^\n]+)', r'\n\n\1', html_content)
+                
+                # Ensure proper spacing after article titles with reading time links
+                html_content = re.sub(r'(\[[^\]]+\]\([^\)]+\))\n([^\n])', r'\1\n\n\2', html_content)
+                
                 html_content = re.sub(r'\n{3,}', '\n\n', html_content)  # Max 2 consecutive newlines
                 html_content = re.sub(r'^\s+|\s+$', '', html_content)  # Trim start/end whitespace
                 
@@ -960,8 +973,8 @@ class EmailNews(commands.Cog):
                                 if html_content and len(html_content.strip()) > len(content.strip()):
                                     content = self.convert_html_to_text_with_links(html_content)
                                 
-                                # Enhance reading time indicators to make them more prominent
-                                content = self.enhance_reading_time_indicators(content)
+                                # Reading time indicators are now handled during HTML processing
+                                # content = self.enhance_reading_time_indicators(content)
                                 
                                 # Links are already converted to Discord markdown format in HTML processing
                                 # Only convert remaining text-based links that weren't in HTML format
