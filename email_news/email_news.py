@@ -317,32 +317,13 @@ class EmailNews(commands.Cog):
                 html_content = re.sub(r'<div[^>]*max-height:\s*0[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
                 html_content = re.sub(r'<div[^>]*overflow:\s*hidden[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
                 
-                # Filter out unsubscribe and dangerous tracking links for security
-                # But preserve reading time tracking links
+                # Define dangerous patterns for link filtering
                 dangerous_patterns = [
                     r'unsubscribe',
                     r'manage.*subscription',
                     r'email.*forward',
                     r'opt.*out'
                 ]
-                
-                # Remove dangerous links but preserve safe ones
-                def filter_link(match):
-                    url = match.group(1)
-                    text = match.group(2)
-                    
-                    # Check if URL contains dangerous patterns
-                    for pattern in dangerous_patterns:
-                        if re.search(pattern, url, re.IGNORECASE):
-                            return f"{text} [LINK REMOVED FOR SECURITY]"
-                    
-                    # Check if this is a reading time link (contains tracking URL and reading time text)
-                    if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                        # Keep the format that enhance_reading_time_indicators expects
-                        return f"{text} {url}"
-                    
-                    # Keep other safe links in standard format
-                    return f"{text} ({url})"
                 
                 # Convert <a href="url">text</a> to Discord markdown format with filtering
                 # Handle nested tags within links properly
@@ -922,9 +903,6 @@ class EmailNews(commands.Cog):
                                 # If we have HTML content, try to extract better formatted text with inline links
                                 if html_content and len(html_content.strip()) > len(content.strip()):
                                     content = self.convert_html_to_text_with_links(html_content)
-                                
-                                # Enhance reading time indicators to make them more prominent
-                                content = self.enhance_reading_time_indicators(content)
                                 
                                 # Convert text links to clickable Discord format
                                 content = self.convert_text_links_to_discord_format(content)
