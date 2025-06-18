@@ -34,7 +34,7 @@ class CommandBatch(commands.Cog):
         """Create a new command profile.
         
         Commands should be separated by commas.
-        Example: `!multicommand create myprofile !unload email_news, !cog uninstall email_news, !repo update`
+        Example: `!multicommand create myprofile !unload email_news,!cog uninstall email_news,!repo update`
         """
         if not profile_name.isalnum():
             await ctx.send("❌ Profile name must contain only letters and numbers.")
@@ -214,7 +214,7 @@ class CommandBatch(commands.Cog):
         
         embed.add_field(
             name="📝 Create Profile",
-            value="`!multicommand create <name> <command1>, <command2>, ...`\nExample: `!multicommand create test !unload cog, !load cog`",
+            value="`!multicommand create <name> <command1>,<command2>,...`\nExample: `!multicommand create test !unload cog,!load cog`",
             inline=False
         )
         
