@@ -31,7 +31,7 @@ A Red-DiscordBot cog that allows you to create custom command profiles and execu
 ### Creating a Profile for Email News Testing
 
 ```
-!multicommand create testemailnews unload email_news,cog uninstall email_news,repo update,cog install my-cogs-repo email_news,load email_news,set api email_news secret your-encryption-key-here,emailnews setdefaultchannel examplechannel,emailnews setup eqcemailforward@gmail.com examplepassword,emailnews interval 3600,emailnews checknow
+!multicommand create testemailnews unload email_news,cog uninstall email_news,repo update,cog install my-cogs-repo email_news,load email_news,set api email_news secret your-encryption-key-here,emailnews setdefaultchannel examplechannel,emailnews setup your-email@example.com your-app-password,emailnews interval 3600,emailnews checknow
 ```
 
 ### Running the Profile

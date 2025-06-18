@@ -121,6 +121,10 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 .venv
 env/
 venv/
@@ -156,9 +160,9 @@ cython_debug/
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be added to the global gitignore or merged into this project gitignore.  For a PyCharm
 #  project, it is recommended to include the following files:
-#*.iml
-#modules.xml
-#.idea/
+*.iml
+modules.xml
+.idea/
 
 # VSCode
 .vscode/
@@ -171,3 +175,103 @@ cython_debug/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# ===== RED-DISCORD BOT SPECIFIC =====
+# Red-Discord Bot configuration and data files
+config.json
+core_data_backup.json
+data/
+backups/
+logs/
+*.log
+*.log.*
+redbot_logs.txt
+redbot_logs*.txt
+
+# Red-Discord Bot testing and development files
+pytesting/
+test*/
+testing/
+*test*
+*debug*
+*temp*
+*tmp*
+
+# ===== SECURITY SENSITIVE FILES =====
+# API Keys, tokens, and credentials
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+secrets.json
+credentials.json
+auth.json
+token.txt
+api_key.txt
+password.txt
+
+# Email and SMTP configuration
+email_config.json
+smtp_config.json
+*email*
+*smtp*
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+
+# Personal/sensitive data
+personal/
+private/
+sensitive/
+
+# Email testing and sample files
+*email*embed*
+*test*email*
+email*test*
+
+# ===== DEVELOPMENT AND DEBUGGING =====
+# Local development files
+local/
+dev/
+development/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Editor backup files
+*~
+*.swp
+*.swo
+*.bak
+
+# ===== NEVER COMMIT THESE =====
+# Any file containing actual email addresses or credentials
+# (These patterns catch common naming conventions)
+*credentials*
+*secrets*
+*private*
+*confidential*
+*sensitive*
+
+# Specific files that should never be committed
+config/
+configs/
+settings.json
+local_settings.json
+prod_settings.json
+production_settings.json
