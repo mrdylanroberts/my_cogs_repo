@@ -215,6 +215,34 @@ class EmailNews(commands.Cog):
         urls = re.findall(url_pattern, content)
         return urls
     
+    def extract_real_url_from_tracking(self, tracking_url: str) -> str:
+        """Extract the real destination URL from a tracking URL."""
+        try:
+            # For TLDR tracking URLs, the real URL is encoded in the path
+            if 'tracking.tldrnewsletter.com/CL0/' in tracking_url:
+                # Extract the encoded URL part
+                parts = tracking_url.split('/CL0/')
+                if len(parts) > 1:
+                    encoded_part = parts[1].split('/')[0]
+                    # URL decode the encoded part
+                    import urllib.parse
+                    decoded_url = urllib.parse.unquote(encoded_part)
+                    # Remove any remaining URL encoding
+                    decoded_url = urllib.parse.unquote(decoded_url)
+                    return decoded_url
+            
+            # For other tracking URLs with utm_source, try to find the original URL
+            if 'utm_source' in tracking_url:
+                # Remove UTM parameters
+                base_url = tracking_url.split('?')[0]
+                return base_url
+            
+            # If we can't extract, return the original URL
+            return tracking_url
+        except Exception as e:
+            log.warning(f"Failed to extract real URL from tracking URL: {e}")
+            return tracking_url
+
     def convert_html_to_text_with_links(self, html_content: str) -> str:
         """Convert HTML content to text while preserving inline links and filtering dangerous links."""
         if not html_content:
@@ -366,9 +394,11 @@ class EmailNews(commands.Cog):
                             # Format as: **[Title](URL)** (X minute read)
                             return f"**[{title}]({url})** ({minutes} minute read)"
                         
-                        # Handle tracking URLs (make them bold)
+                        # Handle tracking URLs - extract the real URL and make them bold
                         if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
-                            return f"**[{clean_text}]({url})**"
+                            # Extract the real URL from tracking URL
+                            real_url = self.extract_real_url_from_tracking(url)
+                            return f"**[{clean_text}]({real_url})**"
                         
                         # Regular links
                         return f"[{clean_text}]({url})"
