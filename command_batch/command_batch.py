@@ -23,7 +23,7 @@ class CommandBatch(commands.Cog):
         self.config.register_global(**default_global)
     
     @commands.group(name="multicommand", aliases=["mcmd", "batch"])
-    @checks.is_owner()
+    @checks.mod_or_permissions(administrator=True)
     async def multicommand(self, ctx: commands.Context):
         """Manage and execute command batches."""
         if ctx.invoked_subcommand is None:

@@ -98,8 +98,9 @@ A Red-DiscordBot cog that allows you to create custom command profiles and execu
 
 ## Permissions
 
-- This cog requires **bot owner** permissions to use
-- All commands are restricted to bot owners for security
+- This cog requires **moderator** or **administrator** permissions to use
+- All commands are restricted to moderators and administrators for security
+- Users with the "Manage Server" permission can also use these commands
 
 ## Tips
 
