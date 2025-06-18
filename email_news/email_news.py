@@ -353,7 +353,7 @@ class EmailNews(commands.Cog):
                     # Keep other safe links in standard format
                     return f"{text} ({url})"
                 
-                # Convert <a href="url">text</a> to text (url) with filtering
+                # Convert <a href="url">text</a> to Discord markdown format with filtering
                 # Handle nested tags within links properly
                 def replace_link(match):
                     url = match.group(1)
@@ -373,8 +373,8 @@ class EmailNews(commands.Cog):
                     if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', clean_text, re.IGNORECASE):
                         return f"{clean_text} {url}"
                     
-                    # Keep other safe links in standard format
-                    return f"{clean_text} ({url})"
+                    # Convert to Discord markdown format for other safe links
+                    return f"[{clean_text}]({url})"
                 
                 html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
                                     replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
@@ -490,17 +490,31 @@ class EmailNews(commands.Cog):
             return content
         
         # Pattern to find text followed by URL in parentheses
-        # This handles the format: "text (https://example.com)"
-        link_pattern = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
+        # Updated to handle complex text with multiple parentheses and special characters
+        # Matches: "text content (https://example.com)" where text can contain parentheses
+        link_pattern = r'([^\n]+?)\s+\((https?://[^\)\s]+)\)'
         
         def convert_to_markdown_link(match):
             text = match.group(1).strip()
             url = match.group(2).strip()
+            
+            # Clean up text - remove trailing punctuation that might interfere
+            text = re.sub(r'[\s,;:]+$', '', text)
+            
+            # Skip if text is too short or just punctuation
+            if len(text.strip()) < 2 or re.match(r'^[^a-zA-Z0-9]*$', text):
+                return f'{text} ({url})'
+            
             # Convert to Discord markdown link format
             return f'[{text}]({url})'
         
         # Apply the conversion
         content = re.sub(link_pattern, convert_to_markdown_link, content)
+        
+        # Also handle cases where there might be extra spaces or formatting
+        # Pattern for "text] (url)" format that might occur
+        bracket_pattern = r'([^\n\[]+)\]\s+\((https?://[^\)\s]+)\)'
+        content = re.sub(bracket_pattern, r'[\1](\2)', content)
         
         return content
     
@@ -949,7 +963,8 @@ class EmailNews(commands.Cog):
                                 # Enhance reading time indicators to make them more prominent
                                 content = self.enhance_reading_time_indicators(content)
                                 
-                                # Convert text links to clickable Discord format
+                                # Links are already converted to Discord markdown format in HTML processing
+                                # Only convert remaining text-based links that weren't in HTML format
                                 content = self.convert_text_links_to_discord_format(content)
                                 
                                 # Clean and process the content
