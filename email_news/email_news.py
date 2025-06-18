@@ -470,18 +470,32 @@ class EmailNews(commands.Cog):
         # Pattern 1: text followed by URL in parentheses: "text (https://example.com)"
         link_pattern_parens = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
         
-        # Pattern 2: text followed by URL with space: "text https://example.com"
-        link_pattern_space = r'([^\n]+?)\s+(https?://[^\s]+)'
+        # Pattern 2: reading time followed by URL: "(X minute read) https://example.com"
+        reading_time_pattern = r'(\([^\)]*minute read\))\s+(https?://[^\s]+)'
+        
+        # Pattern 3: title followed by reading time and URL: "Title (X minute read) https://example.com"
+        title_reading_time_pattern = r'([^\n]*?)\s+(\([^\)]*minute read\))\s+(https?://[^\s]+)'
+        
+        def convert_reading_time_link(match):
+            reading_time = match.group(1).strip()
+            url = match.group(2).strip()
+            return f'[{reading_time}]({url})'
+        
+        def convert_title_reading_time_link(match):
+            title = match.group(1).strip()
+            reading_time = match.group(2).strip()
+            url = match.group(3).strip()
+            return f'**[{title}]({url})** {reading_time}'
         
         def convert_to_markdown_link(match):
             text = match.group(1).strip()
             url = match.group(2).strip()
-            # Convert to Discord markdown link format
             return f'[{text}]({url})'
         
-        # Apply both conversions
+        # Apply conversions in order of specificity
+        content = re.sub(title_reading_time_pattern, convert_title_reading_time_link, content)
+        content = re.sub(reading_time_pattern, convert_reading_time_link, content)
         content = re.sub(link_pattern_parens, convert_to_markdown_link, content)
-        content = re.sub(link_pattern_space, convert_to_markdown_link, content)
         
         return content
     
