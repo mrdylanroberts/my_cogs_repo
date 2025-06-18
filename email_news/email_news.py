@@ -363,9 +363,18 @@ class EmailNews(commands.Cog):
                     clean_text = re.sub(r'<[^>]+>', '', inner_content)
                     clean_text = html.unescape(clean_text.strip())
                     
-                    # Apply filtering
-                    fake_match = type('Match', (), {'group': lambda i: url if i == 1 else clean_text})()
-                    return filter_link(fake_match)
+                    # Apply filtering directly without fake match object
+                    # Check if URL contains dangerous patterns
+                    for pattern in dangerous_patterns:
+                        if re.search(pattern, url, re.IGNORECASE):
+                            return f"{clean_text} [LINK REMOVED FOR SECURITY]"
+                    
+                    # Check if this is a reading time link
+                    if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', clean_text, re.IGNORECASE):
+                        return f"{clean_text} {url}"
+                    
+                    # Keep other safe links in standard format
+                    return f"{clean_text} ({url})"
                 
                 html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
                                     replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)

@@ -9,7 +9,8 @@
         "cryptography",
         "aiosmtplib",
         "aioimaplib",
-        "aiofiles"
+        "aiofiles",
+        "beautifulsoup4"
     ],
     "tags": [
         "email",
