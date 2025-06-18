@@ -1,5 +1,5 @@
 {
-    "author": ["YourName"],
+    "author": ["mrdylanroberts"],
     "name": "Glossary",
     "short": "Interactive cybersecurity glossary with user contributions",
     "description": "A comprehensive cybersecurity glossary cog that allows users to browse terms with pagination, search for definitions, and contribute new terms. Features moderation system, alphabetical sorting, and Discord UI integration.",
@@ -7,5 +7,8 @@
     "tags": ["cybersecurity", "education", "glossary", "reference", "moderation"],
     "requirements": [],
     "hidden": false,
-    "end_user_data_statement": "This cog stores user-submitted glossary terms and definitions, including the author's user ID and display name for moderation purposes."
+    "end_user_data_statement": "This cog stores user-submitted glossary terms and definitions, including the author's user ID and display name for moderation purposes.",
+    "min_bot_version": "3.5.0",
+    "disabled": false,
+    "type": "COG"
 }

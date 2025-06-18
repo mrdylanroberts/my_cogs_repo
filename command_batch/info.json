@@ -8,7 +8,7 @@
     "requirements": [],
     "hidden": false,
     "end_user_data_statement": "This cog stores command profiles globally. No user data is stored.",
-    "min_bot_version": "3.4.0",
-    "max_bot_version": "0.0.0",
-    "min_python_version": [3, 8, 0]
+    "min_bot_version": "3.5.0",
+    "disabled": false,
+    "type": "COG"
 }

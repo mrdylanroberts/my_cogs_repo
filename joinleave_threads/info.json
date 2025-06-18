@@ -1,6 +1,6 @@
 {
     "author": [
-        "Your Name"
+        "mrdylanroberts"
     ],
     "install_msg": "Thanks for installing joinleave_threads! Use `[p]help JoinLeaveThreads` for a list of commands.",
     "name": "JoinLeaveThreads",
@@ -16,5 +16,8 @@
     ],
     "requirements": [],
     "min_bot_version": "3.5.0",
-    "end_user_data_statement": "This cog does not persistently store any end user data."
+    "end_user_data_statement": "This cog does not persistently store any end user data.",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
 }
