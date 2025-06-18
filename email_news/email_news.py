@@ -283,9 +283,16 @@ class EmailNews(commands.Cog):
                         if is_dangerous:
                             link.replace_with(f"{text} [LINK REMOVED FOR SECURITY]")
                         elif re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                            link.replace_with(f"{text} {url}")
+                            # Extract real URL and format as markdown link
+                            real_url = self.extract_real_url_from_tracking(url)
+                            link.replace_with(f"**[{text}]({real_url})**")
                         else:
-                            link.replace_with(f"{text} ({url})")
+                            # Extract real URL if it's a tracking URL
+                            if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
+                                real_url = self.extract_real_url_from_tracking(url)
+                                link.replace_with(f"[{text}]({real_url})")
+                            else:
+                                link.replace_with(f"[{text}]({url})")
                     else:
                         link.decompose()
                 
@@ -957,11 +964,15 @@ class EmailNews(commands.Cog):
                                         content = "Could not decode email content."
                                 
                                 # If we have HTML content, try to extract better formatted text with inline links
+                                html_processed = False
                                 if html_content and len(html_content.strip()) > len(content.strip()):
                                     content = self.convert_html_to_text_with_links(html_content)
+                                    html_processed = True
                                 
-                                # Convert text links to clickable Discord format
-                                content = self.convert_text_links_to_discord_format(content)
+                                # Convert text links to clickable Discord format only if HTML wasn't processed
+                                # (HTML processing already creates proper markdown links)
+                                if not html_processed:
+                                    content = self.convert_text_links_to_discord_format(content)
                                 
                                 # Clean and process the content
                                 cleaned_content = self.clean_email_content(content)
