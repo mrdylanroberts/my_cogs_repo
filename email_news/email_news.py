@@ -335,46 +335,33 @@ class EmailNews(commands.Cog):
                     r'opt.*out'
                 ]
                 
-                # Remove dangerous links but preserve safe ones
-                def filter_link(match):
-                    url = match.group(1)
-                    text = match.group(2)
-                    
-                    # Check if URL contains dangerous patterns
-                    for pattern in dangerous_patterns:
-                        if re.search(pattern, url, re.IGNORECASE):
-                            return f"{text} [LINK REMOVED FOR SECURITY]"
-                    
-                    # Check if this is a reading time link (contains tracking URL and reading time text)
-                    if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                        # Keep the format that enhance_reading_time_indicators expects
-                        return f"{text} {url}"
-                    
-                    # Keep other safe links in standard format
-                    return f"{text} ({url})"
-                
                 # Convert <a href="url">text</a> to Discord markdown format with filtering
                 # Handle nested tags within links properly
                 def replace_link(match):
-                    url = match.group(1)
-                    inner_content = match.group(2)
-                    
-                    # Remove HTML tags from inner content
-                    clean_text = re.sub(r'<[^>]+>', '', inner_content)
-                    clean_text = html.unescape(clean_text.strip())
-                    
-                    # Apply filtering directly without fake match object
-                    # Check if URL contains dangerous patterns
-                    for pattern in dangerous_patterns:
-                        if re.search(pattern, url, re.IGNORECASE):
-                            return f"{clean_text} [LINK REMOVED FOR SECURITY]"
-                    
-                    # Check if this is a reading time link
-                    if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', clean_text, re.IGNORECASE):
-                        return f"**[{clean_text}]({url})**"
-                    
-                    # Convert to Discord markdown format for other safe links
-                    return f"[{clean_text}]({url})"
+                    try:
+                        url = match.group(1)
+                        inner_content = match.group(2)
+                        
+                        # Remove HTML tags from inner content
+                        clean_text = re.sub(r'<[^>]+>', '', inner_content)
+                        clean_text = html.unescape(clean_text.strip())
+                        
+                        # Apply filtering directly without fake match object
+                        # Check if URL contains dangerous patterns
+                        for pattern in dangerous_patterns:
+                            if re.search(pattern, url, re.IGNORECASE):
+                                return f"{clean_text} [LINK REMOVED FOR SECURITY]"
+                        
+                        # Check if this is a reading time link
+                        if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', clean_text, re.IGNORECASE):
+                            return f"**[{clean_text}]({url})**"
+                        
+                        # Convert to Discord markdown format for other safe links
+                        return f"[{clean_text}]({url})"
+                    except Exception as e:
+                        log.warning(f"Error in replace_link function: {e}")
+                        # Return original match if there's an error
+                        return match.group(0)
                 
                 html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
                                     replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
