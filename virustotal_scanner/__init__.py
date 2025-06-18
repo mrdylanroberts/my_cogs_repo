@@ -9,5 +9,5 @@ async def setup(bot: Red) -> None:
         await bot.add_cog(VirusTotalScanner(bot))
         log.info("VirusTotalScanner cog loaded successfully")
     except Exception as e:
-        log.error(f"Failed to load VirusTotalScanner cog: {e}", exc_info=True)
+        log.error(f"Failed to load VirusTotalScanner cog: {e}")
         raise
