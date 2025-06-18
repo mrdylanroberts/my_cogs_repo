@@ -364,7 +364,7 @@ class EmailNews(commands.Cog):
                     clean_text = html.unescape(clean_text.strip())
                     
                     # Apply filtering
-                    fake_match = type('Match', (), {'group': lambda self, i: url if i == 1 else clean_text})()
+                    fake_match = type('Match', (), {'group': lambda i: url if i == 1 else clean_text})()
                     return filter_link(fake_match)
                 
                 html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
@@ -951,20 +951,34 @@ class EmailNews(commands.Cog):
                                 
                                 # Create embeds for each chunk
                                 embeds = []
+                                # Truncate subject if too long for Discord embed title (max 256 chars)
+                                safe_subject = subject[:250] + "..." if len(subject) > 250 else subject
+                                
                                 for i, chunk in enumerate(content_chunks):
+                                    # Ensure chunk is not too long for embed description (max 4096 chars)
+                                    safe_chunk = chunk[:4000] + "..." if len(chunk) > 4000 else chunk
+                                    
+                                    embed_title = safe_subject if i == 0 else f"{safe_subject} (Page {i + 1})"
+                                    # Ensure title is not too long
+                                    embed_title = embed_title[:250] + "..." if len(embed_title) > 250 else embed_title
+                                    
                                     embed = discord.Embed(
-                                        title=subject if i == 0 else f"{subject} (Page {i + 1})",
-                                        description=chunk,
+                                        title=embed_title,
+                                        description=safe_chunk,
                                         color=discord.Color.blue(),
                                         timestamp=datetime.now(timezone.utc)
                                     )
                                     
                                     if i == 0:  # Add metadata only to first embed
-                                        embed.add_field(name="From", value=from_address, inline=True)
-                                        embed.add_field(name="Date", value=date, inline=True)
+                                        # Truncate from_address if too long for field value (max 1024 chars)
+                                        safe_from = from_address[:1020] + "..." if len(from_address) > 1020 else from_address
+                                        safe_date = date[:1020] + "..." if date and len(date) > 1020 else (date or "Unknown")
+                                        embed.add_field(name="From", value=safe_from, inline=True)
+                                        embed.add_field(name="Date", value=safe_date, inline=True)
                                     
                                     if len(content_chunks) > 1:
-                                        embed.set_footer(text=f"Page {i + 1} of {len(content_chunks)}")
+                                        footer_text = f"Page {i + 1} of {len(content_chunks)}"
+                                        embed.set_footer(text=footer_text[:2048])  # Footer text max 2048 chars
                                     
                                     embeds.append(embed)
                                 
