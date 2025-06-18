@@ -243,7 +243,7 @@ class EmailNews(commands.Cog):
                     r'opt.*out'
                 ]
                 
-                # Convert links to Discord markdown format with filtering
+                # Convert links to text format with filtering
                 for link in soup.find_all('a', href=True):
                     url = link.get('href')
                     text = link.get_text(strip=True)
@@ -255,9 +255,9 @@ class EmailNews(commands.Cog):
                         if is_dangerous:
                             link.replace_with(f"{text} [LINK REMOVED FOR SECURITY]")
                         elif re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                            link.replace_with(f"**[{text}]({url})**")
+                            link.replace_with(f"{text} {url}")
                         else:
-                            link.replace_with(f"[{text}]({url})")
+                            link.replace_with(f"{text} ({url})")
                     else:
                         link.decompose()
                 
@@ -287,18 +287,9 @@ class EmailNews(commands.Cog):
                 text = re.sub(r'^\s+|\s+$', '', text, flags=re.MULTILINE)  # Trim start/end whitespace per line
                 
                 # Remove zero-width non-joiners and other invisible characters
-                text = text.replace('\u200c', '')  # Zero-width non-joiner
+                text = text.replace('\u200c', '')
                 text = text.replace('\u200b', '')  # Zero-width space
                 text = text.replace('\ufeff', '')  # Byte order mark
-                text = text.replace('\u2060', '')  # Word joiner
-                text = text.replace('\u00ad', '')  # Soft hyphen
-                text = text.replace('‌', '')       # Zero-width non-joiner (HTML entity)
-                text = text.replace('​', '')       # Zero-width space (HTML entity)
-                
-                # Additional cleanup for TLDR newsletter specific issues
-                # Remove excessive spaces that might be left after removing invisible characters
-                text = re.sub(r'\s{2,}', ' ', text)  # Multiple spaces to single space
-                text = re.sub(r'\n\s+\n', '\n\n', text)  # Clean up paragraph breaks
                 
                 return text.strip()
             
@@ -335,6 +326,24 @@ class EmailNews(commands.Cog):
                     r'opt.*out'
                 ]
                 
+                # Remove dangerous links but preserve safe ones
+                def filter_link(match):
+                    url = match.group(1)
+                    text = match.group(2)
+                    
+                    # Check if URL contains dangerous patterns
+                    for pattern in dangerous_patterns:
+                        if re.search(pattern, url, re.IGNORECASE):
+                            return f"{text} [LINK REMOVED FOR SECURITY]"
+                    
+                    # Check if this is a reading time link (contains tracking URL and reading time text)
+                    if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
+                        # Keep the format that enhance_reading_time_indicators expects
+                        return f"{text} {url}"
+                    
+                    # Keep other safe links in standard format
+                    return f"{text} ({url})"
+                
                 # Convert <a href="url">text</a> to Discord markdown format with filtering
                 # Handle nested tags within links properly
                 def replace_link(match):
@@ -344,34 +353,51 @@ class EmailNews(commands.Cog):
                         
                         # Remove HTML tags from inner content
                         clean_text = re.sub(r'<[^>]+>', '', inner_content)
-                        clean_text = str(clean_text).strip()
-                        clean_text = html.unescape(clean_text)
+                        clean_text = html.unescape(clean_text.strip())
                         
-                        # Apply filtering directly without fake match object
                         # Check if URL contains dangerous patterns
                         for pattern in dangerous_patterns:
                             if re.search(pattern, url, re.IGNORECASE):
                                 return f"{clean_text} [LINK REMOVED FOR SECURITY]"
                         
-                        # Check if this is a reading time link
-                        if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', clean_text, re.IGNORECASE):
+                        # Handle paginated links with reading time
+                        # Pattern: Title (Page X) (Y minute read)
+                        page_time_pattern = r'^(.*?)\s*\(Page\s+(\d+)\)\s*\((\d+)\s+minute\s+read\)\s*$'
+                        page_time_match = re.match(page_time_pattern, clean_text, re.IGNORECASE)
+                        
+                        if page_time_match:
+                            title = page_time_match.group(1).strip()
+                            page_num = page_time_match.group(2)
+                            minutes = page_time_match.group(3)
+                            
+                            # Format as: **[Title (Page X)](URL)** (Y minute read)
+                            return f"**[{title} (Page {page_num})]({url})** ({minutes} minute read)"
+                        
+                        # Handle regular reading time links
+                        # Pattern: Title (X minute read)
+                        time_pattern = r'^(.*?)\s*\((\d+)\s+minute\s+read\)\s*$'
+                        time_match = re.match(time_pattern, clean_text, re.IGNORECASE)
+                        
+                        if time_match:
+                            title = time_match.group(1).strip()
+                            minutes = time_match.group(2)
+                            
+                            # Format as: **[Title](URL)** (X minute read)
+                            return f"**[{title}]({url})** ({minutes} minute read)"
+                        
+                        # Handle tracking URLs (make them bold)
+                        if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
                             return f"**[{clean_text}]({url})**"
                         
-                        # Convert to Discord markdown format for other safe links
+                        # Regular links
                         return f"[{clean_text}]({url})"
                     except Exception as e:
                         log.warning(f"Error in replace_link function: {e}")
                         # Return original match if there's an error
                         return match.group(0)
                 
-                # Apply link replacement with proper error handling
-                try:
-                    html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
-                                        replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
-                except Exception as e:
-                    log.warning(f"Error in link replacement: {e}")
-                    # Fallback: just remove anchor tags without conversion
-                    html_content = re.sub(r'<a[^>]*>(.*?)</a>', r'\1', html_content, flags=re.IGNORECASE | re.DOTALL)
+                html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
+                                    replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
                 
                 # Handle table structures - convert to readable text
                 # First add line breaks after table rows for better readability
@@ -384,14 +410,8 @@ class EmailNews(commands.Cog):
                 for tag in table_tags:
                     html_content = re.sub(f'</?{tag}[^>]*>', '', html_content, flags=re.IGNORECASE)
                 
-                # Add line breaks for block elements with better spacing
-                # Headers get double line breaks for better section separation
-                header_elements = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']
-                for element in header_elements:
-                    html_content = re.sub(f'</?{element}[^>]*>', '\n\n', html_content, flags=re.IGNORECASE)
-                
-                # Other block elements get single line breaks
-                block_elements = ['div', 'p', 'br']
+                # Add line breaks for block elements
+                block_elements = ['div', 'p', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']
                 for element in block_elements:
                     html_content = re.sub(f'</?{element}[^>]*>', '\n', html_content, flags=re.IGNORECASE)
                 
@@ -413,45 +433,13 @@ class EmailNews(commands.Cog):
                 # Remove common email artifacts and metadata
                 html_content = re.sub(r'From\s+[^\n]*@[^\n]*', '', html_content)
                 html_content = re.sub(r'Date\s+[^\n]*', '', html_content)
-                # Remove pagination text in various formats: "Page X of Y", "(Page X)", "Page X"
                 html_content = re.sub(r'Page \d+ of \d+[^\n]*', '', html_content)
-                html_content = re.sub(r'\(Page \d+\)', '', html_content)
-                
-                # Remove zero-width and invisible characters (same as BeautifulSoup path)
-                invisible_chars = [
-                    '\u200c',  # Zero-width non-joiner
-                    '\u200b',  # Zero-width space
-                    '\ufeff',  # Byte order mark
-                    '\u2060',  # Word joiner
-                    '\u00ad',  # Soft hyphen
-                    '‌',       # Zero-width non-joiner (HTML entity)
-                    '​',       # Zero-width space (HTML entity)
-                    '\u200d',  # Zero-width joiner
-                    '\u2061',  # Function application
-                    '\u2062',  # Invisible times
-                    '\u2063',  # Invisible separator
-                    '\u2064',  # Invisible plus
-                ]
-                
-                for char in invisible_chars:
-                    html_content = html_content.replace(char, '')
                 
                 # Clean up excessive whitespace but preserve paragraph breaks
                 html_content = re.sub(r'[ \t]+', ' ', html_content)  # Multiple spaces/tabs to single space
                 html_content = re.sub(r'\n[ \t]*\n', '\n\n', html_content)  # Clean paragraph breaks
-                
-                # Add proper spacing before emoji-prefixed sections (like 📱, 🚀, 💻, 🎁)
-                html_content = re.sub(r'\n([📱🚀💻🎁][^\n]+)', r'\n\n\1', html_content)
-                
-                # Ensure proper spacing after article titles with reading time links
-                html_content = re.sub(r'(\[[^\]]+\]\([^\)]+\))\n([^\n])', r'\1\n\n\2', html_content)
-                
                 html_content = re.sub(r'\n{3,}', '\n\n', html_content)  # Max 2 consecutive newlines
                 html_content = re.sub(r'^\s+|\s+$', '', html_content)  # Trim start/end whitespace
-                
-                # Additional cleanup for spacing issues from removed invisible characters
-                html_content = re.sub(r'\s{2,}', ' ', html_content)  # Multiple spaces to single space
-                html_content = re.sub(r'\n\s+\n', '\n\n', html_content)  # Clean up paragraph breaks
                 
                 return html_content.strip()
         except Exception as e:
@@ -499,35 +487,17 @@ class EmailNews(commands.Cog):
             return content
         
         # Pattern to find text followed by URL in parentheses
-        # Updated to handle complex text with multiple parentheses and special characters
-        # Matches: "text content (https://example.com)" where text can contain parentheses
-        link_pattern = r'([^\n]+?)\s+\((https?://[^\)\s]+)\)'
+        # This handles the format: "text (https://example.com)"
+        link_pattern = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
         
         def convert_to_markdown_link(match):
             text = match.group(1).strip()
             url = match.group(2).strip()
-            
-            # Skip if text already contains markdown link formatting (like bold reading time links)
-            if re.search(r'\*\*.*?\]\(.*?\)\*\*', text) or text.startswith('[') or '](' in text:
-                return f'{text} ({url})'
-            
-            # Clean up text - remove trailing punctuation that might interfere
-            text = re.sub(r'[\s,;:]+$', '', text)
-            
-            # Skip if text is too short or just punctuation
-            if len(text.strip()) < 2 or re.match(r'^[^a-zA-Z0-9]*$', text):
-                return f'{text} ({url})'
-            
             # Convert to Discord markdown link format
             return f'[{text}]({url})'
         
         # Apply the conversion
         content = re.sub(link_pattern, convert_to_markdown_link, content)
-        
-        # Also handle cases where there might be extra spaces or formatting
-        # Pattern for "text] (url)" format that might occur
-        bracket_pattern = r'([^\n\[]+)\]\s+\((https?://[^\)\s]+)\)'
-        content = re.sub(bracket_pattern, r'[\1](\2)', content)
         
         return content
     
@@ -536,32 +506,12 @@ class EmailNews(commands.Cog):
         if not content:
             return "No content available"
         
-        # Remove all types of zero-width and invisible characters
-        invisible_chars = [
-            '\u200c',  # Zero-width non-joiner
-            '\u200b',  # Zero-width space
-            '\ufeff',  # Byte order mark
-            '\u2060',  # Word joiner
-            '\u00ad',  # Soft hyphen
-            '‌',       # Zero-width non-joiner (HTML entity)
-            '​',       # Zero-width space (HTML entity)
-            '\u200d',  # Zero-width joiner
-            '\u2061',  # Function application
-            '\u2062',  # Invisible times
-            '\u2063',  # Invisible separator
-            '\u2064',  # Invisible plus
-        ]
-        
-        for char in invisible_chars:
-            content = content.replace(char, '')
-        
         # Remove excessive whitespace and normalize line breaks
         content = re.sub(r'\n\s*\n\s*\n+', '\n\n', content)
         content = re.sub(r'[ \t]+', ' ', content)
         
-        # Clean up any remaining spacing issues from removed invisible characters
-        content = re.sub(r'\s{2,}', ' ', content)  # Multiple spaces to single space
-        content = re.sub(r'\n\s+\n', '\n\n', content)  # Clean paragraph breaks
+        # Remove common email artifacts
+        content = re.sub(r'‌+', '', content)  # Remove zero-width non-joiners
         
         # DON'T remove reference numbers like [1], [2] as they may be linked to URLs
         # Instead, preserve them to maintain link context
@@ -572,49 +522,10 @@ class EmailNews(commands.Cog):
         
         return content
 
-    def find_discord_links(self, content: str) -> List[tuple]:
-        """Find all Discord markdown links and their positions in the content."""
-        links = []
-        # Pattern for both regular and bold Discord markdown links
-        pattern = r'(\*\*)?\[([^\]]+)\]\(([^)]+)\)(\*\*)?'
-        
-        for match in re.finditer(pattern, content):
-            start, end = match.span()
-            links.append((start, end))
-        
-        return links
-    
-    def is_split_safe(self, content: str, split_pos: int, links: List[tuple]) -> bool:
-        """Check if splitting at this position would break a Discord markdown link."""
-        for start, end in links:
-            if start < split_pos < end:
-                return False
-        return True
-    
-    def find_safe_split_point(self, content: str, max_pos: int, links: List[tuple]) -> int:
-        """Find a safe position to split content that doesn't break links."""
-        # Start from the max position and work backwards to find a safe split
-        for pos in range(max_pos, 0, -1):
-            if self.is_split_safe(content, pos, links) and content[pos-1] in ' \n\t':
-                return pos
-        
-        # If no safe split found, try to find the end of the nearest link
-        for start, end in links:
-            if start < max_pos < end:
-                # If we're inside a link, move to after the link if possible
-                if end < len(content):
-                    return end
-        
-        # Fallback to original position
-        return max_pos
-    
     def split_content_for_pagination(self, content: str, max_length: int = 1900) -> List[str]:
-        """Split content into chunks for pagination while preserving Discord markdown links."""
+        """Split content into chunks for pagination while preserving readability."""
         if len(content) <= max_length:
             return [content]
-        
-        # Find all Discord markdown links in the content
-        links = self.find_discord_links(content)
         
         chunks = []
         current_chunk = ""
@@ -633,23 +544,8 @@ class EmailNews(commands.Cog):
                 if len(paragraph) > max_length:
                     sentences = re.split(r'(?<=[.!?])\s+', paragraph)
                     for sentence in sentences:
-                        potential_length = len(current_chunk) + len(sentence) + 1
-                        if potential_length > max_length:
+                        if len(current_chunk) + len(sentence) + 1 > max_length:
                             if current_chunk:
-                                # Find the position in the original content
-                                chunk_start = content.find(current_chunk)
-                                if chunk_start != -1:
-                                    chunk_end = chunk_start + len(current_chunk)
-                                    # Check if this split point is safe
-                                    if not self.is_split_safe(content, chunk_end, links):
-                                        # Find a safe split point
-                                        safe_split = self.find_safe_split_point(content, chunk_end, links)
-                                        if safe_split < chunk_end:
-                                            # Adjust the current chunk to the safe split point
-                                            relative_pos = safe_split - chunk_start
-                                            if relative_pos > 0:
-                                                current_chunk = current_chunk[:relative_pos].strip()
-                                
                                 chunks.append(current_chunk.strip())
                                 current_chunk = ""
                         current_chunk += sentence + " "
@@ -1027,11 +923,10 @@ class EmailNews(commands.Cog):
                                 if html_content and len(html_content.strip()) > len(content.strip()):
                                     content = self.convert_html_to_text_with_links(html_content)
                                 
-                                # Reading time indicators are now handled during HTML processing
-                                # content = self.enhance_reading_time_indicators(content)
+                                # Enhance reading time indicators to make them more prominent
+                                content = self.enhance_reading_time_indicators(content)
                                 
-                                # Links are already converted to Discord markdown format in HTML processing
-                                # Only convert remaining text-based links that weren't in HTML format
+                                # Convert text links to clickable Discord format
                                 content = self.convert_text_links_to_discord_format(content)
                                 
                                 # Clean and process the content
@@ -1042,34 +937,20 @@ class EmailNews(commands.Cog):
                                 
                                 # Create embeds for each chunk
                                 embeds = []
-                                # Truncate subject if too long for Discord embed title (max 256 chars)
-                                safe_subject = subject[:250] + "..." if len(subject) > 250 else subject
-                                
                                 for i, chunk in enumerate(content_chunks):
-                                    # Ensure chunk is not too long for embed description (max 4096 chars)
-                                    safe_chunk = chunk[:4000] + "..." if len(chunk) > 4000 else chunk
-                                    
-                                    embed_title = safe_subject if i == 0 else f"{safe_subject} (Page {i + 1})"
-                                    # Ensure title is not too long
-                                    embed_title = embed_title[:250] + "..." if len(embed_title) > 250 else embed_title
-                                    
                                     embed = discord.Embed(
-                                        title=embed_title,
-                                        description=safe_chunk,
+                                        title=subject if i == 0 else f"{subject} (Page {i + 1})",
+                                        description=chunk,
                                         color=discord.Color.blue(),
                                         timestamp=datetime.now(timezone.utc)
                                     )
                                     
                                     if i == 0:  # Add metadata only to first embed
-                                        # Truncate from_address if too long for field value (max 1024 chars)
-                                        safe_from = from_address[:1020] + "..." if len(from_address) > 1020 else from_address
-                                        safe_date = date[:1020] + "..." if date and len(date) > 1020 else (date or "Unknown")
-                                        embed.add_field(name="From", value=safe_from, inline=True)
-                                        embed.add_field(name="Date", value=safe_date, inline=True)
+                                        embed.add_field(name="From", value=from_address, inline=True)
+                                        embed.add_field(name="Date", value=date, inline=True)
                                     
                                     if len(content_chunks) > 1:
-                                        footer_text = f"Page {i + 1} of {len(content_chunks)}"
-                                        embed.set_footer(text=footer_text[:2048])  # Footer text max 2048 chars
+                                        embed.set_footer(text=f"Page {i + 1} of {len(content_chunks)}")
                                     
                                     embeds.append(embed)
                                 
