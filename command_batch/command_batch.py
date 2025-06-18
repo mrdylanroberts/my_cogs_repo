@@ -33,15 +33,15 @@ class CommandBatch(commands.Cog):
     async def create_profile(self, ctx: commands.Context, profile_name: str, *, commands_list: str):
         """Create a new command profile.
         
-        Commands should be separated by commas.
-        Example: `!multicommand create myprofile !unload email_news,!cog uninstall email_news,!repo update`
+        Commands should be separated by '>' symbols.
+        Example: `!multicommand create myprofile !set api email_news secret,your-encryption-key-here>!repo update>!cog reload email_news`
         """
         if not profile_name.isalnum():
             await ctx.send("❌ Profile name must contain only letters and numbers.")
             return
         
         # Parse commands from the input
-        commands_raw = [cmd.strip() for cmd in commands_list.split(',')]
+        commands_raw = [cmd.strip() for cmd in commands_list.split('>')]
         commands_clean = []
         
         for cmd in commands_raw:
@@ -214,7 +214,7 @@ class CommandBatch(commands.Cog):
         
         embed.add_field(
             name="📝 Create Profile",
-            value="`!multicommand create <name> <command1>,<command2>,...`\nExample: `!multicommand create test !unload cog,!load cog`",
+            value="`!multicommand create <name> <command1>><command2>>...`\nExample: `!multicommand create test !set api email_news secret,your-key>!repo update>!cog reload email_news`",
             inline=False
         )
         
@@ -232,7 +232,7 @@ class CommandBatch(commands.Cog):
         
         embed.add_field(
             name="💡 Tips",
-            value="• Commands are executed with a 1-second delay between each\n• Don't include the `!` prefix when creating profiles\n• Profile names must be alphanumeric only",
+            value="• Commands are executed with a 1-second delay between each\n• Don't include the `!` prefix when creating profiles\n• Profile names must be alphanumeric only\n• Use '>' to separate commands (allows commas in individual commands)",
             inline=False
         )
         
