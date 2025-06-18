@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import logging
 from typing import Dict, List, Optional
 
@@ -96,21 +97,28 @@ class CommandBatch(commands.Cog):
                 embed.description = f"Running profile `{profile_name}` ({i}/{len(commands_list)})\n\n**Current:** `{command}`"
                 await status_msg.edit(embed=embed)
                 
-                # Create a fake message to invoke the command
-                fake_message = ctx.message
+                # Create a new message object for each command
+                fake_message = copy.copy(ctx.message)
                 fake_message.content = f"{ctx.prefix}{command}"
                 
-                # Process the command
+                # Process the command and wait for completion
                 new_ctx = await self.bot.get_context(fake_message)
                 if new_ctx.valid:
-                    await self.bot.invoke(new_ctx)
-                    results.append(f"✅ `{command}` - Success")
-                    success_count += 1
+                    # Execute the command and wait for it to complete
+                    try:
+                        await self.bot.invoke(new_ctx)
+                        # Additional wait to ensure command processing is complete
+                        await asyncio.sleep(2)
+                        results.append(f"✅ `{command}` - Success")
+                        success_count += 1
+                    except Exception as cmd_error:
+                        results.append(f"❌ `{command}` - Command Error: {str(cmd_error)[:100]}")
+                        log.error(f"Command execution error for '{command}': {cmd_error}")
                 else:
                     results.append(f"❌ `{command}` - Invalid command")
                 
-                # Small delay between commands to prevent rate limiting
-                await asyncio.sleep(1)
+                # Longer delay between commands to ensure completion
+                await asyncio.sleep(3)
                 
             except Exception as e:
                 results.append(f"❌ `{command}` - Error: {str(e)[:100]}")
