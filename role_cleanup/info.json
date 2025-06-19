@@ -1,0 +1,20 @@
+{
+    "author": [
+        "mrdylanroberts"
+    ],
+    "name": "RoleCleanup",
+    "short": "Automatically manages roles based on reactions in specified channels.",
+    "description": "This cog listens for reactions in a welcome channel to assign a 'ROLE_SELECTOR' role, and listens for reactions in a role selection channel to remove 'GUEST' and 'ROLE_SELECTOR' roles. Channel IDs and role names should be configured.",
+    "tags": [
+        "roles",
+        "automation",
+        "welcome",
+        "reaction roles"
+    ],
+    "requirements": [],
+    "min_bot_version": "3.5.0",
+    "end_user_data_statement": "This cog does not persistently store any end user data.",
+    "hidden": false,
+    "disabled": false,
+    "type": "COG"
+}

@@ -1,0 +1,14 @@
+{
+    "author": ["mrdylanroberts"],
+    "name": "CommandBatch",
+    "short": "Execute multiple commands in sequence with custom profiles",
+    "description": "A cog that allows you to create custom command profiles and execute multiple commands in sequence. Perfect for testing workflows, cog management, and repetitive tasks. Create profiles with sets of commands and run them with a single command.",
+    "install_msg": "Thanks for installing CommandBatch! Use `!multicommand` to get started with creating command profiles.",
+    "tags": ["utility", "automation", "commands", "batch", "testing"],
+    "requirements": [],
+    "hidden": false,
+    "end_user_data_statement": "This cog stores command profiles globally. No user data is stored.",
+    "min_bot_version": "3.5.0",
+    "disabled": false,
+    "type": "COG"
+}
