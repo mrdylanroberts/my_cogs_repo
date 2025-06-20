@@ -35,8 +35,13 @@ class RoleCleanup(commands.Cog):
         # Get configured values from Config
         welcome_channel_id = await self.config.guild(guild).welcome_channel_id()
         role_selection_channel_id = await self.config.guild(guild).role_selection_channel_id()
+        
+        # Debug: Log all reaction events
+        log.info(f"DEBUG: Reaction detected - Channel: {payload.channel_id}, User: {member.name}, Emoji: {payload.emoji}")
+        log.info(f"DEBUG: Welcome channel ID: {welcome_channel_id}, Role selection channel ID: {role_selection_channel_id}")
 
         if not all([welcome_channel_id, role_selection_channel_id]):
+            log.warning(f"DEBUG: Channels not configured - Welcome: {welcome_channel_id}, Role Selection: {role_selection_channel_id}")
             return  # Channels not configured yet
 
         if payload.channel_id == welcome_channel_id: 
