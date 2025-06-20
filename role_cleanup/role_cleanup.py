@@ -43,29 +43,36 @@ class RoleCleanup(commands.Cog):
 
         if payload.channel_id == welcome_channel_id: 
             if str(payload.emoji) == "✅":
-                selector_role = discord.utils.get(guild.roles, name=role_selector_name)
+                # Use specific role ID for ROLE_SELECTOR
+                selector_role_id = 1380244431256420463  # @ROLE_SELECTOR
+                selector_role = guild.get_role(selector_role_id)
                 if selector_role:
                     try:
                         await member.add_roles(selector_role, reason="Reacted in welcome channel.")
                     except discord.Forbidden:
                         # Log this or inform an admin, bot lacks permissions
-                        log.error(f"Failed to add role {role_selector_name} to {member.name} in {guild.name} - Forbidden")
+                        log.error(f"Failed to add role {selector_role.name} to {member.name} in {guild.name} - Forbidden")
                     except discord.HTTPException as e:
-                        log.error(f"Failed to add role {role_selector_name} to {member.name} in {guild.name} - HTTPException: {e}")
+                        log.error(f"Failed to add role {selector_role.name} to {member.name} in {guild.name} - HTTPException: {e}")
                 else:
                     # Log this, role not found
-                    log.warning(f"Role {role_selector_name} not found in {guild.name}")
+                    log.warning(f"Role with ID {selector_role_id} not found in {guild.name}")
 
         elif payload.channel_id == role_selection_channel_id:
             # This part assumes any reaction in role_selection_channel_id (except by bots)
             # should lead to removal of GUEST and ROLE_SELECTOR roles.
             # This might need refinement if you have multiple reaction roles in this channel.
             log.info(f"DEBUG: Reaction in role selection channel by {member.name}")
-            guest_role = discord.utils.get(guild.roles, name=guest_role_name)
-            selector_role = discord.utils.get(guild.roles, name=role_selector_name)
             
-            log.info(f"DEBUG: Looking for guest role '{guest_role_name}': {guest_role}")
-            log.info(f"DEBUG: Looking for selector role '{role_selector_name}': {selector_role}")
+            # Use specific role IDs instead of names for reliability
+            guest_role_id = 1378417620474138674  # @GUEST
+            selector_role_id = 1380244431256420463  # @ROLE_SELECTOR
+            
+            guest_role = guild.get_role(guest_role_id)
+            selector_role = guild.get_role(selector_role_id)
+            
+            log.info(f"DEBUG: Looking for guest role ID {guest_role_id}: {guest_role}")
+            log.info(f"DEBUG: Looking for selector role ID {selector_role_id}: {selector_role}")
             log.info(f"DEBUG: Member {member.name} current roles: {[role.name for role in member.roles]}")
 
             roles_to_remove = []
