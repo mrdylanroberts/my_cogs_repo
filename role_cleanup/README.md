@@ -22,10 +22,11 @@ A Red-DiscordBot cog that automatically manages user roles based on reactions in
 - `[p]rolecleanup` or `[p]rc` - Shows current configuration settings
 
 ### Subcommands
-- `[p]rolecleanup welcomechannel <channel>` - Sets the welcome channel where users react with ✅ to get the role selector role
-- `[p]rolecleanup roleselectionchannel <channel>` - Sets the role selection channel where reactions remove guest/selector roles
-- `[p]rolecleanup selectorrole <role_name>` - Sets the name of the role selector role (default: "ROLE_SELECTOR")
-- `[p]rolecleanup guestrole <role_name>` - Sets the name of the guest role (default: "GUEST")
+- `[p]rolecleanup info` - Show current role cleanup configuration
+- `[p]rolecleanup welcomechannel <channel>` - Set the welcome channel
+- `[p]rolecleanup roleselectionchannel <channel>` - Set the role selection channel
+- `[p]rolecleanup roleselector <role>` - Set the role selector role (given to users who react in welcome channel)
+- `[p]rolecleanup guestrole <role>` - Set the guest role (removed when users react in role selection channel)
 
 **Aliases**: `rc` can be used instead of `rolecleanup`
 
@@ -35,17 +36,18 @@ A Red-DiscordBot cog that automatically manages user roles based on reactions in
 
 1. **Set Welcome Channel**: Use `[p]rolecleanup welcomechannel #your-welcome-channel`
 2. **Set Role Selection Channel**: Use `[p]rolecleanup roleselectionchannel #your-role-selection-channel`
-3. **Create Required Roles**: Ensure your server has the roles specified in the configuration (default: "GUEST" and "ROLE_SELECTOR")
-4. **Create Welcome Message**: Manually post a welcome message in the welcome channel and add a ✅ reaction to it
-5. **Optional**: Customize role names using `selectorrole` and `guestrole` commands if needed
+3. **Set Role Selector Role**: Use `[p]rolecleanup roleselector @YourRoleSelectorRole`
+4. **Set Guest Role**: Use `[p]rolecleanup guestrole @YourGuestRole`
+5. **Create Welcome Message**: Manually post a welcome message in the welcome channel and add a ✅ reaction to it
+6. **Verify Configuration**: Use `[p]rolecleanup info` to confirm all settings are correct
 
 **Important**: This cog does NOT automatically create welcome messages. You must manually create and post your welcome message in the configured welcome channel, then add the ✅ reaction for users to click.
 
 ### How It Works
 
-1. **Welcome Process**: When a user reacts with ✅ in the welcome channel, they receive the "ROLE_SELECTOR" role
-2. **Role Selection**: When a user reacts to any message in the role selection channel, their "GUEST" and "ROLE_SELECTOR" roles are automatically removed
-3. **Error Handling**: The cog will log errors if it lacks permissions or if roles don't exist
+1. **Welcome Process**: When a user reacts with ✅ in the welcome channel, they receive the configured role selector role
+2. **Role Selection**: When a user reacts to any message in the role selection channel, the configured guest role is automatically removed from them
+3. **Error Handling**: The cog will log errors if it lacks permissions, if roles don't exist, or if configuration is incomplete
 
 ## Permissions
 
