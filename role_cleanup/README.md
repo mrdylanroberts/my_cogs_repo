@@ -1,15 +1,13 @@
-# Role Cleanup Cog for Red-DiscordBot
+# Role Cleanup
 
-This cog automatically manages role assignments based on user reactions in specified channels. It's designed to streamline the onboarding process by automatically assigning and removing roles when users react to messages.
+A Red-DiscordBot cog that automatically manages user roles based on reactions in specific channels.
 
 ## Features
 
-- **Automatic Role Assignment**: Assigns a "ROLE_SELECTOR" role when users react with ✅ in the welcome channel
-- **Automatic Role Cleanup**: Removes "GUEST" and "ROLE_SELECTOR" roles when users react in the role selection channel
-- **Configurable Channels**: Set custom welcome and role selection channels
-- **Configurable Role Names**: Customize the names of guest and role selector roles
-- **Error Handling**: Graceful handling of permission errors and missing roles
-- **Admin Controls**: Full configuration through Discord commands
+- **Welcome Channel Integration**: When users react with ✅ in the welcome channel, they receive a configurable role
+- **Role Selection Cleanup**: When users react in the role selection channel, a configurable guest role is automatically removed
+- **Fully Configurable**: Set custom channels and roles for your server
+- **Debug Logging**: Comprehensive logging for troubleshooting and monitoring
 
 ## Installation
 
