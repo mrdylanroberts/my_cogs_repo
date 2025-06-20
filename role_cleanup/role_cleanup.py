@@ -35,12 +35,9 @@ class RoleCleanup(commands.Cog):
         # Get configured values from Config
         welcome_channel_id = await self.config.guild(guild).welcome_channel_id()
         role_selection_channel_id = await self.config.guild(guild).role_selection_channel_id()
-        role_selector_name = await self.config.guild(guild).role_selector_name()
-        guest_role_name = await self.config.guild(guild).guest_role_name()
 
         if not all([welcome_channel_id, role_selection_channel_id]):
             return  # Channels not configured yet
-        # --- End Hardcoded section ---
 
         if payload.channel_id == welcome_channel_id: 
             if str(payload.emoji) == "✅":
@@ -67,11 +64,11 @@ class RoleCleanup(commands.Cog):
             # This might need refinement if you have multiple reaction roles in this channel.
             log.info(f"DEBUG: Reaction in role selection channel by {member.name}")
             
-            # Get guest role ID from config
+            # Get guest role ID from config and remove it
             guest_role_id = await self.config.guild(guild).guest_role_id()
             if guest_role_id:
                 guest_role = guild.get_role(guest_role_id)
-                if guest_role:
+                if guest_role and guest_role in member.roles:
                     try:
                         await member.remove_roles(guest_role, reason="Selected roles in role selection channel.")
                         log.info(f"DEBUG: Removed {guest_role.name} role from {member.name}")
@@ -80,9 +77,32 @@ class RoleCleanup(commands.Cog):
                     except discord.HTTPException as e:
                         log.error(f"Failed to remove role {guest_role.name} from {member.name} in {guild.name} - HTTPException: {e}")
                 else:
-                    log.warning(f"Role with ID {guest_role_id} not found in {guild.name}")
+                    if not guest_role:
+                        log.warning(f"Guest role with ID {guest_role_id} not found in {guild.name}")
+                    else:
+                        log.info(f"DEBUG: {member.name} doesn't have {guest_role.name} role to remove")
             else:
                 log.warning(f"Guest role ID not configured for {guild.name}")
+            
+            # Get role selector ID from config and remove it
+            selector_role_id = await self.config.guild(guild).role_selector_id()
+            if selector_role_id:
+                selector_role = guild.get_role(selector_role_id)
+                if selector_role and selector_role in member.roles:
+                    try:
+                        await member.remove_roles(selector_role, reason="Selected roles in role selection channel.")
+                        log.info(f"DEBUG: Removed {selector_role.name} role from {member.name}")
+                    except discord.Forbidden:
+                        log.error(f"Failed to remove role {selector_role.name} from {member.name} in {guild.name} - Forbidden")
+                    except discord.HTTPException as e:
+                        log.error(f"Failed to remove role {selector_role.name} from {member.name} in {guild.name} - HTTPException: {e}")
+                else:
+                    if not selector_role:
+                        log.warning(f"Role selector with ID {selector_role_id} not found in {guild.name}")
+                    else:
+                        log.info(f"DEBUG: {member.name} doesn't have {selector_role.name} role to remove")
+            else:
+                log.warning(f"Role selector ID not configured for {guild.name}")
 
     @commands.group(name="rolecleanup", aliases=["rc"])
     @commands.guild_only()
