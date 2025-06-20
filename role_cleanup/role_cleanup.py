@@ -1,5 +1,8 @@
 import discord
 from redbot.core import commands, Config
+import logging
+
+log = logging.getLogger("red.my-cogs-repo.role_cleanup")
 
 class RoleCleanup(commands.Cog):
     """Manages role assignments based on reactions."""
@@ -46,45 +49,45 @@ class RoleCleanup(commands.Cog):
                         await member.add_roles(selector_role, reason="Reacted in welcome channel.")
                     except discord.Forbidden:
                         # Log this or inform an admin, bot lacks permissions
-                        print(f"Failed to add role {role_selector_name} to {member.name} in {guild.name} - Forbidden")
+                        log.error(f"Failed to add role {role_selector_name} to {member.name} in {guild.name} - Forbidden")
                     except discord.HTTPException as e:
-                        print(f"Failed to add role {role_selector_name} to {member.name} in {guild.name} - HTTPException: {e}")
+                        log.error(f"Failed to add role {role_selector_name} to {member.name} in {guild.name} - HTTPException: {e}")
                 else:
                     # Log this, role not found
-                    print(f"Role {role_selector_name} not found in {guild.name}")
+                    log.warning(f"Role {role_selector_name} not found in {guild.name}")
 
         elif payload.channel_id == role_selection_channel_id:
             # This part assumes any reaction in role_selection_channel_id (except by bots)
             # should lead to removal of GUEST and ROLE_SELECTOR roles.
             # This might need refinement if you have multiple reaction roles in this channel.
-            print(f"DEBUG: Reaction in role selection channel by {member.name}")
+            log.info(f"DEBUG: Reaction in role selection channel by {member.name}")
             guest_role = discord.utils.get(guild.roles, name=guest_role_name)
             selector_role = discord.utils.get(guild.roles, name=role_selector_name)
             
-            print(f"DEBUG: Looking for guest role '{guest_role_name}': {guest_role}")
-            print(f"DEBUG: Looking for selector role '{role_selector_name}': {selector_role}")
-            print(f"DEBUG: Member {member.name} current roles: {[role.name for role in member.roles]}")
+            log.info(f"DEBUG: Looking for guest role '{guest_role_name}': {guest_role}")
+            log.info(f"DEBUG: Looking for selector role '{role_selector_name}': {selector_role}")
+            log.info(f"DEBUG: Member {member.name} current roles: {[role.name for role in member.roles]}")
 
             roles_to_remove = []
             if guest_role and guest_role in member.roles:
                 roles_to_remove.append(guest_role)
-                print(f"DEBUG: Will remove guest role {guest_role.name}")
+                log.info(f"DEBUG: Will remove guest role {guest_role.name}")
             if selector_role and selector_role in member.roles:
                 roles_to_remove.append(selector_role)
-                print(f"DEBUG: Will remove selector role {selector_role.name}")
+                log.info(f"DEBUG: Will remove selector role {selector_role.name}")
             
-            print(f"DEBUG: Roles to remove: {[role.name for role in roles_to_remove]}")
+            log.info(f"DEBUG: Roles to remove: {[role.name for role in roles_to_remove]}")
             
             if roles_to_remove:
                 try:
                     await member.remove_roles(*roles_to_remove, reason="Reacted in role selection channel.")
-                    print(f"DEBUG: Successfully removed roles from {member.name}")
+                    log.info(f"DEBUG: Successfully removed roles from {member.name}")
                 except discord.Forbidden:
-                    print(f"Failed to remove roles from {member.name} in {guild.name} - Forbidden")
+                    log.error(f"Failed to remove roles from {member.name} in {guild.name} - Forbidden")
                 except discord.HTTPException as e:
-                    print(f"Failed to remove roles from {member.name} in {guild.name} - HTTPException: {e}")
+                    log.error(f"Failed to remove roles from {member.name} in {guild.name} - HTTPException: {e}")
             else:
-                print(f"DEBUG: No roles to remove for {member.name}")
+                log.info(f"DEBUG: No roles to remove for {member.name}")
 
     @commands.group(name="rolecleanup", aliases=["rc"])
     @commands.admin_or_permissions(manage_guild=True)
