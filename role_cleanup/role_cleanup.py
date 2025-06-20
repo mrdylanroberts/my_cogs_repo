@@ -19,6 +19,34 @@ class RoleCleanup(commands.Cog):
         self.config.register_guild(**default_guild_settings)
 
     @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        """Handles button interactions from RolesButtons cog."""
+        # Only handle button interactions
+        if interaction.type != discord.InteractionType.component:
+            return
+            
+        # Only handle interactions from guild members (not DMs)
+        if not interaction.guild or not interaction.user:
+            return
+            
+        # Skip bot interactions
+        if interaction.user.bot:
+            return
+            
+        guild = interaction.guild
+        member = interaction.user
+        
+        # Get configured role selection channel
+        role_selection_channel_id = await self.config.guild(guild).role_selection_channel_id()
+        
+        # Debug: Log button interactions in role selection channel
+        if interaction.channel_id == role_selection_channel_id:
+            log.info(f"DEBUG: Button interaction in role selection channel by {member.name}")
+            
+            # Remove both guest and role selector roles when user clicks any button in role selection channel
+            await self._remove_welcome_roles(guild, member)
+    
+    @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         """Handles raw reaction add events to manage roles."""
         if payload.member.bot:
@@ -64,50 +92,53 @@ class RoleCleanup(commands.Cog):
                     log.warning(f"Role selector ID not configured for {guild.name}")
 
         elif payload.channel_id == role_selection_channel_id:
-            # This part assumes any reaction in role_selection_channel_id (except by bots)
-            # should lead to removal of GUEST and ROLE_SELECTOR roles.
-            # This might need refinement if you have multiple reaction roles in this channel.
+            # Handle emoji reactions in role selection channel (fallback for non-button reactions)
             log.info(f"DEBUG: Reaction in role selection channel by {member.name}")
             
-            # Get guest role ID from config and remove it
-            guest_role_id = await self.config.guild(guild).guest_role_id()
-            if guest_role_id:
-                guest_role = guild.get_role(guest_role_id)
-                if guest_role and guest_role in member.roles:
-                    try:
-                        await member.remove_roles(guest_role, reason="Selected roles in role selection channel.")
-                        log.info(f"DEBUG: Removed {guest_role.name} role from {member.name}")
-                    except discord.Forbidden:
-                        log.error(f"Failed to remove role {guest_role.name} from {member.name} in {guild.name} - Forbidden")
-                    except discord.HTTPException as e:
-                        log.error(f"Failed to remove role {guest_role.name} from {member.name} in {guild.name} - HTTPException: {e}")
-                else:
-                    if not guest_role:
-                        log.warning(f"Guest role with ID {guest_role_id} not found in {guild.name}")
-                    else:
-                        log.info(f"DEBUG: {member.name} doesn't have {guest_role.name} role to remove")
+            # Remove both guest and role selector roles
+            await self._remove_welcome_roles(guild, member)
+    
+    async def _remove_welcome_roles(self, guild: discord.Guild, member: discord.Member):
+        """Helper method to remove both guest and role selector roles from a member."""
+        # Get guest role ID from config and remove it
+        guest_role_id = await self.config.guild(guild).guest_role_id()
+        if guest_role_id:
+            guest_role = guild.get_role(guest_role_id)
+            if guest_role and guest_role in member.roles:
+                try:
+                    await member.remove_roles(guest_role, reason="Selected class role in role selection channel.")
+                    log.info(f"DEBUG: Removed {guest_role.name} role from {member.name}")
+                except discord.Forbidden:
+                    log.error(f"Failed to remove role {guest_role.name} from {member.name} in {guild.name} - Forbidden")
+                except discord.HTTPException as e:
+                    log.error(f"Failed to remove role {guest_role.name} from {member.name} in {guild.name} - HTTPException: {e}")
             else:
-                log.warning(f"Guest role ID not configured for {guild.name}")
-            
-            # Get role selector ID from config and remove it
-            selector_role_id = await self.config.guild(guild).role_selector_id()
-            if selector_role_id:
-                selector_role = guild.get_role(selector_role_id)
-                if selector_role and selector_role in member.roles:
-                    try:
-                        await member.remove_roles(selector_role, reason="Selected roles in role selection channel.")
-                        log.info(f"DEBUG: Removed {selector_role.name} role from {member.name}")
-                    except discord.Forbidden:
-                        log.error(f"Failed to remove role {selector_role.name} from {member.name} in {guild.name} - Forbidden")
-                    except discord.HTTPException as e:
-                        log.error(f"Failed to remove role {selector_role.name} from {member.name} in {guild.name} - HTTPException: {e}")
+                if not guest_role:
+                    log.warning(f"Guest role with ID {guest_role_id} not found in {guild.name}")
                 else:
-                    if not selector_role:
-                        log.warning(f"Role selector with ID {selector_role_id} not found in {guild.name}")
-                    else:
-                        log.info(f"DEBUG: {member.name} doesn't have {selector_role.name} role to remove")
+                    log.info(f"DEBUG: {member.name} doesn't have {guest_role.name} role to remove")
+        else:
+            log.warning(f"Guest role ID not configured for {guild.name}")
+        
+        # Get role selector ID from config and remove it
+        selector_role_id = await self.config.guild(guild).role_selector_id()
+        if selector_role_id:
+            selector_role = guild.get_role(selector_role_id)
+            if selector_role and selector_role in member.roles:
+                try:
+                    await member.remove_roles(selector_role, reason="Selected class role in role selection channel.")
+                    log.info(f"DEBUG: Removed {selector_role.name} role from {member.name}")
+                except discord.Forbidden:
+                    log.error(f"Failed to remove role {selector_role.name} from {member.name} in {guild.name} - Forbidden")
+                except discord.HTTPException as e:
+                    log.error(f"Failed to remove role {selector_role.name} from {member.name} in {guild.name} - HTTPException: {e}")
             else:
-                log.warning(f"Role selector ID not configured for {guild.name}")
+                if not selector_role:
+                    log.warning(f"Role selector with ID {selector_role_id} not found in {guild.name}")
+                else:
+                    log.info(f"DEBUG: {member.name} doesn't have {selector_role.name} role to remove")
+        else:
+            log.warning(f"Role selector ID not configured for {guild.name}")
 
     @commands.group(name="rolecleanup", aliases=["rc"])
     @commands.guild_only()
