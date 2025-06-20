@@ -36,8 +36,8 @@ A Red-DiscordBot cog that automatically manages user roles based on reactions in
 
 1. **Set Welcome Channel**: Use `[p]rolecleanup welcomechannel #your-welcome-channel`
 2. **Set Role Selection Channel**: Use `[p]rolecleanup roleselectionchannel #your-role-selection-channel`
-3. **Set Role Selector Role**: Use `[p]rolecleanup roleselector @YourRoleSelectorRole`
-4. **Set Guest Role**: Use `[p]rolecleanup guestrole @YourGuestRole`
+3. **Set Guest Role**: Use `[p]rolecleanup guestrole @YourGuestRole`
+4. **Set Role Selector Role**: Use `[p]rolecleanup roleselector @YourRoleSelectorRole`
 5. **Create Welcome Message**: Manually post a welcome message in the welcome channel and add a ✅ reaction to it
 6. **Verify Configuration**: Use `[p]rolecleanup info` to confirm all settings are correct
 
@@ -62,11 +62,28 @@ Ensure the bot has the following permissions:
 
 ## Example Workflow
 
-1. New user joins server and gets "GUEST" role
-2. User reads welcome message and reacts with ✅
-3. Bot adds "ROLE_SELECTOR" role to user
+1. New user joins server and gets @GUEST role automatically (via other bot features)
+2. User reads welcome message in welcome channel and reacts with ✅
+3. Bot adds @ROLE_SELECTOR role to user
 4. User goes to role selection channel and reacts to get their class role
-5. Bot removes "GUEST" and "ROLE_SELECTOR" roles, leaving user with only their selected class role
+5. Bot removes @GUEST and @ROLE_SELECTOR roles from user
+6. User now has only their selected class role(s)
+
+## Troubleshooting
+
+### Roles Not Being Removed in Role Selection Channel
+
+If roles are not being removed when users react in the role selection channel, check for conflicts with other reaction-based cogs:
+
+1. **RolesButtons Cog Conflict**: If you're using the RolesButtons cog (or similar) in the same role selection channel, it may consume reaction events before role_cleanup can process them.
+   - **Solution**: Use separate channels for RolesButtons and role_cleanup, or disable one of the cogs in that channel.
+   - **Alternative**: Consider using only RolesButtons for role management if it meets your needs.
+
+2. **Check Logs**: Enable debug logging to see if reactions are being detected:
+   - Look for messages like: `DEBUG: Reaction detected - Channel: [ID], User: [username]`
+   - Verify the channel ID matches your role selection channel
+
+3. **Verify Configuration**: Use `[p]rolecleanup info` to ensure all channels and roles are properly configured.
 
 ## Troubleshooting
 
