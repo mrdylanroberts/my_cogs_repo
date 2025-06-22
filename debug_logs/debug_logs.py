@@ -1985,13 +1985,15 @@ class DebugLogs(commands.Cog):
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE
                             )
-                            await asyncio.wait_for(result.communicate(), timeout=30)
+                            stdout, stderr = await asyncio.wait_for(result.communicate(), timeout=30)
                             
                             if result.returncode == 0:
                                 setup_results.append(f"✅ Added {current_user} to systemd-journal group")
                                 setup_results.append("⚠️ You may need to restart the bot for group changes to take effect")
                             else:
-                                setup_results.append("❌ Failed to add user to systemd-journal group")
+                                error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                                setup_results.append(f"❌ Failed to add user to systemd-journal group: {error_msg[:100]}")
+                                setup_results.append("💡 Try running manually: sudo usermod -a -G systemd-journal $(whoami)")
                     except KeyError:
                         setup_results.append("⚠️ systemd-journal group not found")
                     except Exception as e:
@@ -2091,11 +2093,11 @@ class DebugLogs(commands.Cog):
                 # Write logrotate config
                 result = await asyncio.create_subprocess_exec(
                     'sudo', 'tee', '/etc/logrotate.d/red-discordbot',
-                    input=logrotate_config.encode(),
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                await result.communicate()
+                await result.communicate(input=logrotate_config.encode())
                 
                 if result.returncode == 0:
                     setup_results.append("✅ Log rotation configured successfully")
