@@ -181,99 +181,13 @@ class DebugLogs(commands.Cog):
         except (OSError, ValueError):
             return False
     
-    async def _auto_detect_service_name(self) -> Optional[str]:
-        """
-        Automatically detect the correct systemd service name for Red-DiscordBot.
-        Tries common service names and patterns.
-        """
-        if not self.journal_available:
-            return None
-        
-        # Common service name patterns for Red-DiscordBot
-        service_patterns = [
-            "red-discordbot",
-            "redbot",
-            "red",
-            "discordbot",
-            "red-bot"
-        ]
-        
-        try:
-            # First, try to find services with "red" in the name
-            cmd = ["systemctl", "list-units", "--type=service", "--all", "--no-pager"]
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
-            
-            if process.returncode == 0:
-                output = stdout.decode('utf-8', errors='ignore')
-                lines = output.split('\n')
-                
-                # Look for services containing "red" or "bot"
-                for line in lines:
-                    if '.service' in line:
-                        service_name = line.split()[0].replace('.service', '')
-                        if any(pattern in service_name.lower() for pattern in ['red', 'bot']):
-                            # Verify this service has recent activity
-                            if await self._verify_service_activity(service_name):
-                                logging.info(f"Auto-detected Red-DiscordBot service: {service_name}")
-                                return service_name
-            
-            # Fallback: try common patterns directly
-            for pattern in service_patterns:
-                if await self._verify_service_activity(pattern):
-                    logging.info(f"Auto-detected Red-DiscordBot service: {pattern}")
-                    return pattern
-            
-        except Exception as e:
-            logging.error(f"Failed to auto-detect service name: {e}")
-        
-        return None
-    
-    async def _verify_service_activity(self, service_name: str) -> bool:
-        """
-        Verify if a service has recent activity and is likely the Red-DiscordBot service.
-        """
-        try:
-            # Check if service exists and has recent logs
-            cmd = ["journalctl", "-u", service_name, "-n", "5", "--no-pager", "--since", "1 hour ago"]
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5.0)
-            
-            if process.returncode == 0:
-                output = stdout.decode('utf-8', errors='ignore')
-                # Look for Red-DiscordBot specific patterns in logs
-                red_patterns = ['red-discordbot', 'redbot', 'discord.py', 'Red-DiscordBot']
-                return any(pattern.lower() in output.lower() for pattern in red_patterns)
-            
-        except Exception:
-            pass
-        
-        return False
-
-    async def _get_journal_logs(self, service_name: str = None, lines: int = 1000,
+    async def _get_journal_logs(self, service_name: str = None, lines: int = 1000, 
                                since: str = None, until: str = None) -> Optional[str]:
         """
         Get logs from systemd journal for Ubuntu VPS.
-        Enhanced with auto-detection and better error handling.
         """
         if not self.journal_available:
             return None
-        
-        # Auto-detect service name if not provided
-        if not service_name:
-            service_name = await self._auto_detect_service_name()
-            if not service_name:
-                return "-- No Red-DiscordBot service detected --\nPlease configure the service name using: !debuglogs config service <service_name>"
         
         try:
             cmd = ['journalctl', '--no-pager', '--output=short-iso']
@@ -298,29 +212,14 @@ class DebugLogs(commands.Cog):
             stdout, stderr = await asyncio.wait_for(result.communicate(), timeout=30)
             
             if result.returncode == 0:
-                output = stdout.decode('utf-8', errors='ignore')
-                
-                # If no logs found, provide helpful message
-                if not output.strip():
-                    return f"-- No entries found for service '{service_name}' --\n\nThis could mean:\n1. Service name is incorrect\n2. No recent activity\n3. Insufficient permissions\n\nTry: !debuglogs permissions"
-                
-                return output
+                return stdout.decode('utf-8', errors='ignore')
             else:
-                error_msg = stderr.decode('utf-8', errors='ignore')
-                logging.error(f"Journal command failed for service {service_name}: {error_msg}")
-                
-                # Try auto-detection if the configured service failed
-                if service_name != "red-discordbot":
-                    auto_service = await self._auto_detect_service_name()
-                    if auto_service and auto_service != service_name:
-                        logging.info(f"Retrying with auto-detected service: {auto_service}")
-                        return await self._get_journal_logs(auto_service, lines, since, until)
-                
-                return f"-- Error accessing journal for service '{service_name}' --\n{error_msg}\n\nTry: !debuglogs config service <correct_service_name>"
+                logging.error(f"Journal command failed: {stderr.decode()}")
+                return None
                 
         except (asyncio.TimeoutError, subprocess.SubprocessError) as e:
             logging.error(f"Failed to get journal logs: {e}")
-            return f"-- Error retrieving journal logs --\n{str(e)}"
+            return None
     
     async def _get_system_resources(self) -> Dict[str, Any]:
         """
@@ -1955,86 +1854,329 @@ class DebugLogs(commands.Cog):
             )
         
         await ctx.send(embed=embed)
-    
-    @debug_logs.command(name="autosetup")
-    async def logs_autosetup(self, ctx):
+
+    @debug_logs.command(name="ubuntu_setup")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def ubuntu_vps_setup(self, ctx):
         """
-        Automatically configure the debug_logs cog for Ubuntu VPS.
-        Detects and configures the correct systemd service name.
+        Automated Ubuntu VPS setup for enhanced debug_logs functionality.
+        
+        This command performs the same setup as the ubuntu_setup.sh script:
+        - Installs required system packages
+        - Adds user to systemd-journal group
+        - Creates log directories
+        - Configures log rotation
+        - Creates systemd service template
         """
+        # Check if running on Linux
+        if os.name != 'posix':
+            embed = discord.Embed(
+                title="❌ Platform Not Supported",
+                description="Ubuntu VPS setup is only available on Linux systems.",
+                color=discord.Color.red()
+            )
+            await ctx.send(embed=embed)
+            return
+        
+        # Send initial status
         setup_embed = discord.Embed(
-            title="🔧 Auto-Setup for Ubuntu VPS",
-            description="Attempting to automatically configure debug_logs...",
+            title="🚀 Ubuntu VPS Setup Starting",
+            description="Setting up Ubuntu VPS for enhanced debug_logs functionality...",
             color=discord.Color.blue()
         )
-        setup_msg = await ctx.send(embed=setup_embed)
+        status_msg = await ctx.send(embed=setup_embed)
         
-        results = []
+        setup_results = []
         
-        # Step 1: Check journal availability
-        if self.journal_available:
-            results.append("✅ systemd journal is available")
-        else:
-            results.append("❌ systemd journal not available - requires `systemd-journal` group membership")
-        
-        # Step 2: Auto-detect service name
-        detected_service = await self._auto_detect_service_name()
-        if detected_service:
-            results.append(f"✅ Auto-detected service: `{detected_service}`")
+        try:
+            # 1. Install required system packages
+            setup_results.append("📦 Installing system packages...")
+            await self._update_setup_status(status_msg, setup_results)
             
-            # Configure the detected service
-            await self.config.guild(ctx.guild).service_name.set(detected_service)
-            results.append(f"✅ Configured service name: `{detected_service}`")
-        else:
-            results.append("❌ Could not auto-detect Red-DiscordBot service")
-            results.append("💡 Manual configuration required: `!debuglogs config service <service_name>`")
-        
-        # Step 3: Enable journal fallback
-        await self.config.guild(ctx.guild).journal_fallback.set(True)
-        results.append("✅ Enabled journal fallback")
-        
-        # Step 4: Test journal access
-        if detected_service and self.journal_available:
-            test_logs = await self._get_journal_logs(detected_service, lines=5)
-            if test_logs and "-- No entries" not in test_logs and "-- Error" not in test_logs:
-                results.append("✅ Journal access test successful")
-            else:
-                results.append("⚠️ Journal access test failed - check permissions")
-        
-        # Step 5: Check service status
-        if detected_service:
-            service_status = await self._get_service_status(detected_service)
-            if 'error' not in service_status:
-                status = service_status.get('status', 'unknown')
-                if status == 'active':
-                    results.append(f"✅ Service `{detected_service}` is active")
+            try:
+                # Update package list
+                result = await asyncio.create_subprocess_exec(
+                    'sudo', 'apt', 'update',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await asyncio.wait_for(result.communicate(), timeout=60)
+                
+                # Install packages
+                result = await asyncio.create_subprocess_exec(
+                    'sudo', 'apt', 'install', '-y', 'python3-pip', 'python3-dev', 'build-essential',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await asyncio.wait_for(result.communicate(), timeout=120)
+                
+                if result.returncode == 0:
+                    setup_results.append("✅ System packages installed successfully")
                 else:
-                    results.append(f"⚠️ Service `{detected_service}` status: {status}")
-            else:
-                results.append(f"❌ Could not check service status: {service_status['error']}")
-        
-        # Create final result embed
-        final_embed = discord.Embed(
-            title="🔧 Auto-Setup Results",
-            color=discord.Color.green() if detected_service else discord.Color.orange()
-        )
-        
-        final_embed.description = "\n".join(results)
-        
-        if detected_service:
-            final_embed.add_field(
-                name="✅ Setup Complete",
-                value=f"Your debug_logs cog is now configured for Ubuntu VPS!\n\n**Next steps:**\n• Try: `!debuglogs journal 10`\n• Try: `!debuglogs service_status`\n• Try: `!debuglogs permissions`",
-                inline=False
+                    setup_results.append("⚠️ System packages installation had issues")
+            except asyncio.TimeoutError:
+                setup_results.append("⚠️ System packages installation timed out")
+            except Exception as e:
+                setup_results.append(f"❌ System packages installation failed: {str(e)[:100]}")
+            
+            # 2. Install Python packages
+            setup_results.append("🐍 Installing Python packages...")
+            await self._update_setup_status(status_msg, setup_results)
+            
+            try:
+                result = await asyncio.create_subprocess_exec(
+                    'pip3', 'install', '--user', 'psutil',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await asyncio.wait_for(result.communicate(), timeout=60)
+                
+                if result.returncode == 0:
+                    setup_results.append("✅ Python packages installed successfully")
+                else:
+                    setup_results.append("⚠️ Python packages installation had issues")
+            except Exception as e:
+                setup_results.append(f"❌ Python packages installation failed: {str(e)[:100]}")
+            
+            # 3. Add user to systemd-journal group
+            setup_results.append("👥 Configuring user groups...")
+            await self._update_setup_status(status_msg, setup_results)
+            
+            try:
+                # Get current user
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                
+                # Check if already in group
+                try:
+                    journal_group = grp.getgrnam('systemd-journal')
+                    if current_user in journal_group.gr_mem:
+                        setup_results.append(f"✅ User {current_user} already in systemd-journal group")
+                    else:
+                        # Add to group
+                        result = await asyncio.create_subprocess_exec(
+                            'sudo', 'usermod', '-a', '-G', 'systemd-journal', current_user,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+                        await asyncio.wait_for(result.communicate(), timeout=30)
+                        
+                        if result.returncode == 0:
+                            setup_results.append(f"✅ Added {current_user} to systemd-journal group")
+                            setup_results.append("⚠️ You may need to restart the bot for group changes to take effect")
+                        else:
+                            setup_results.append("❌ Failed to add user to systemd-journal group")
+                except KeyError:
+                    setup_results.append("⚠️ systemd-journal group not found")
+            except Exception as e:
+                setup_results.append(f"❌ Group configuration failed: {str(e)[:100]}")
+            
+            # 4. Create log directories
+            setup_results.append("📁 Creating log directories...")
+            await self._update_setup_status(status_msg, setup_results)
+            
+            log_dirs = [
+                os.path.expanduser("~/.local/share/Red-DiscordBot/logs"),
+                os.path.expanduser("~/redbot/logs"),
+                "/var/log/red-discordbot"
+            ]
+            
+            for log_dir in log_dirs:
+                try:
+                    if log_dir == "/var/log/red-discordbot":
+                        # System directory - needs sudo
+                        if not os.path.exists(log_dir):
+                            result = await asyncio.create_subprocess_exec(
+                                'sudo', 'mkdir', '-p', log_dir,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
+                            )
+                            await result.communicate()
+                            
+                            # Change ownership
+                            current_user = pwd.getpwuid(os.getuid()).pw_name
+                            result = await asyncio.create_subprocess_exec(
+                                'sudo', 'chown', f'{current_user}:{current_user}', log_dir,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
+                            )
+                            await result.communicate()
+                            
+                            setup_results.append(f"✅ Created system log directory: {log_dir}")
+                        else:
+                            setup_results.append(f"✅ System log directory already exists: {log_dir}")
+                    else:
+                        # User directory
+                        if not os.path.exists(log_dir):
+                            os.makedirs(log_dir, exist_ok=True)
+                            setup_results.append(f"✅ Created user log directory: {log_dir}")
+                        else:
+                            setup_results.append(f"✅ User log directory already exists: {log_dir}")
+                except Exception as e:
+                    setup_results.append(f"❌ Failed to create {log_dir}: {str(e)[:100]}")
+            
+            # 5. Configure log rotation
+            setup_results.append("🔄 Configuring log rotation...")
+            await self._update_setup_status(status_msg, setup_results)
+            
+            try:
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                home_dir = os.path.expanduser("~")
+                
+                logrotate_config = f"""# Red-DiscordBot log rotation configuration
+{home_dir}/.local/share/Red-DiscordBot/logs/*.log {{
+    daily
+    missingok
+    rotate 30
+    compress
+    delaycompress
+    notifempty
+    copytruncate
+    su {current_user} {current_user}
+}}
+
+/var/log/red-discordbot/*.log {{
+    daily
+    missingok
+    rotate 30
+    compress
+    delaycompress
+    notifempty
+    copytruncate
+    su {current_user} {current_user}
+}}"""
+                
+                # Write logrotate config
+                result = await asyncio.create_subprocess_exec(
+                    'sudo', 'tee', '/etc/logrotate.d/red-discordbot',
+                    input=logrotate_config.encode(),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await result.communicate()
+                
+                if result.returncode == 0:
+                    setup_results.append("✅ Log rotation configured successfully")
+                else:
+                    setup_results.append("❌ Failed to configure log rotation")
+            except Exception as e:
+                setup_results.append(f"❌ Log rotation configuration failed: {str(e)[:100]}")
+            
+            # 6. Create systemd service template
+            setup_results.append("🔧 Creating systemd service template...")
+            await self._update_setup_status(status_msg, setup_results)
+            
+            try:
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                home_dir = os.path.expanduser("~")
+                
+                service_template = f"""# Red-DiscordBot systemd service template
+# Copy this to /etc/systemd/system/red-discordbot.service and customize
+
+[Unit]
+Description=Red-DiscordBot
+After=network.target
+
+[Service]
+Type=simple
+User={current_user}
+Group={current_user}
+WorkingDirectory={home_dir}
+ExecStart=/usr/bin/python3 -m redbot <instance_name>
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=red-discordbot
+
+# Environment variables
+Environment=PYTHONPATH={home_dir}/.local/lib/python3.*/site-packages
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths={home_dir}/.local/share/Red-DiscordBot
+ReadWritePaths=/var/log/red-discordbot
+
+[Install]
+WantedBy=multi-user.target"""
+                
+                service_file = os.path.join(home_dir, "red-discordbot.service.template")
+                with open(service_file, 'w') as f:
+                    f.write(service_template)
+                
+                setup_results.append(f"✅ Created systemd service template: {service_file}")
+            except Exception as e:
+                setup_results.append(f"❌ Service template creation failed: {str(e)[:100]}")
+            
+            # 7. Test journal access
+            setup_results.append("🧪 Testing journal access...")
+            await self._update_setup_status(status_msg, setup_results)
+            
+            try:
+                result = await asyncio.create_subprocess_exec(
+                    'journalctl', '--no-pager', '-n', '1',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await asyncio.wait_for(result.communicate(), timeout=10)
+                
+                if result.returncode == 0:
+                    setup_results.append("✅ Journal access is working")
+                else:
+                    setup_results.append("⚠️ Journal access test failed - may need to restart bot")
+            except Exception as e:
+                setup_results.append(f"⚠️ Journal access test failed: {str(e)[:100]}")
+            
+            # 8. Create test log entry
+            try:
+                result = await asyncio.create_subprocess_exec(
+                    'logger', '-t', 'red-discordbot-test', 'Debug logs cog setup completed successfully',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                await result.communicate()
+                setup_results.append("✅ Test log entry created")
+            except Exception:
+                setup_results.append("⚠️ Could not create test log entry")
+            
+            # Final status
+            setup_results.append("")
+            setup_results.append("🎉 Ubuntu VPS setup completed!")
+            setup_results.append("")
+            setup_results.append("📋 Next steps:")
+            setup_results.append("1. If you saw group change warnings, restart the bot")
+            setup_results.append("2. Configure the cog: `!debuglogs config service red-discordbot`")
+            setup_results.append("3. Enable journal fallback: `!debuglogs config journal_fallback true`")
+            setup_results.append("4. Test journal access: `!debuglogs journal 50`")
+            
+            await self._update_setup_status(status_msg, setup_results, final=True)
+            
+        except Exception as e:
+            setup_results.append(f"❌ Setup failed with error: {str(e)}")
+            await self._update_setup_status(status_msg, setup_results, final=True)
+    
+    async def _update_setup_status(self, message, results, final=False):
+        """
+        Update the setup status message with current progress.
+        """
+        try:
+            title = "🎉 Ubuntu VPS Setup Complete!" if final else "🚀 Ubuntu VPS Setup In Progress"
+            color = discord.Color.green() if final else discord.Color.blue()
+            
+            embed = discord.Embed(
+                title=title,
+                description="\n".join(results[-20:]),  # Show last 20 lines
+                color=color
             )
-        else:
-            final_embed.add_field(
-                name="⚠️ Manual Setup Required",
-                value="Auto-detection failed. Please:\n1. Find your service name: `systemctl list-units | grep red`\n2. Configure it: `!debuglogs config service <service_name>`\n3. Test: `!debuglogs journal 10`",
-                inline=False
-            )
-        
-        await setup_msg.edit(embed=final_embed)
+            
+            if not final:
+                embed.set_footer(text="Setup in progress... Please wait.")
+            
+            await message.edit(embed=embed)
+        except Exception:
+            pass  # Ignore edit failures
 
     @debug_logs.group(name="config")
     @checks.admin_or_permissions(manage_guild=True)

@@ -5,17 +5,23 @@ This guide covers the enhanced features specifically designed for Red-DiscordBot
 ## 🚀 Quick Setup
 
 ### Automated Setup (Recommended)
+
+For automated setup, use the built-in setup command:
+
 ```
-# Run the automated setup command in Discord
-!debuglogs autosetup
+!debuglogs ubuntu_setup
 ```
 
-This command will:
-- Automatically detect your Red-DiscordBot service name
-- Configure the cog with the detected service
-- Enable journal fallback mode
-- Test journal access and service status
-- Provide guided next steps
+This command will automatically perform all the steps below and provide real-time feedback on the setup process through Discord. The setup includes:
+
+- Installing required system packages
+- Adding your user to the systemd-journal group
+- Creating necessary log directories
+- Configuring log rotation
+- Creating a systemd service template
+- Testing journal access
+
+After the setup completes, you may need to restart your bot if group changes were made.
 
 ### Manual Setup
 If you prefer manual setup, follow the steps in the [Manual Configuration](#manual-configuration) section.
