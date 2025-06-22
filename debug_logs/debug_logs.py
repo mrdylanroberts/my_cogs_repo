@@ -181,13 +181,99 @@ class DebugLogs(commands.Cog):
         except (OSError, ValueError):
             return False
     
-    async def _get_journal_logs(self, service_name: str = None, lines: int = 1000, 
-                               since: str = None, until: str = None) -> Optional[str]:
+    async def _auto_detect_service_name(self) -> Optional[str]:
         """
-        Get logs from systemd journal for Ubuntu VPS.
+        Automatically detect the correct systemd service name for Red-DiscordBot.
+        Tries common service names and patterns.
         """
         if not self.journal_available:
             return None
+        
+        # Common service name patterns for Red-DiscordBot
+        service_patterns = [
+            "red-discordbot",
+            "redbot",
+            "red",
+            "discordbot",
+            "red-bot"
+        ]
+        
+        try:
+            # First, try to find services with "red" in the name
+            cmd = ["systemctl", "list-units", "--type=service", "--all", "--no-pager"]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10.0)
+            
+            if process.returncode == 0:
+                output = stdout.decode('utf-8', errors='ignore')
+                lines = output.split('\n')
+                
+                # Look for services containing "red" or "bot"
+                for line in lines:
+                    if '.service' in line:
+                        service_name = line.split()[0].replace('.service', '')
+                        if any(pattern in service_name.lower() for pattern in ['red', 'bot']):
+                            # Verify this service has recent activity
+                            if await self._verify_service_activity(service_name):
+                                logging.info(f"Auto-detected Red-DiscordBot service: {service_name}")
+                                return service_name
+            
+            # Fallback: try common patterns directly
+            for pattern in service_patterns:
+                if await self._verify_service_activity(pattern):
+                    logging.info(f"Auto-detected Red-DiscordBot service: {pattern}")
+                    return pattern
+            
+        except Exception as e:
+            logging.error(f"Failed to auto-detect service name: {e}")
+        
+        return None
+    
+    async def _verify_service_activity(self, service_name: str) -> bool:
+        """
+        Verify if a service has recent activity and is likely the Red-DiscordBot service.
+        """
+        try:
+            # Check if service exists and has recent logs
+            cmd = ["journalctl", "-u", service_name, "-n", "5", "--no-pager", "--since", "1 hour ago"]
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5.0)
+            
+            if process.returncode == 0:
+                output = stdout.decode('utf-8', errors='ignore')
+                # Look for Red-DiscordBot specific patterns in logs
+                red_patterns = ['red-discordbot', 'redbot', 'discord.py', 'Red-DiscordBot']
+                return any(pattern.lower() in output.lower() for pattern in red_patterns)
+            
+        except Exception:
+            pass
+        
+        return False
+
+    async def _get_journal_logs(self, service_name: str = None, lines: int = 1000,
+                               since: str = None, until: str = None) -> Optional[str]:
+        """
+        Get logs from systemd journal for Ubuntu VPS.
+        Enhanced with auto-detection and better error handling.
+        """
+        if not self.journal_available:
+            return None
+        
+        # Auto-detect service name if not provided
+        if not service_name:
+            service_name = await self._auto_detect_service_name()
+            if not service_name:
+                return "-- No Red-DiscordBot service detected --\nPlease configure the service name using: !debuglogs config service <service_name>"
         
         try:
             cmd = ['journalctl', '--no-pager', '--output=short-iso']
@@ -212,14 +298,29 @@ class DebugLogs(commands.Cog):
             stdout, stderr = await asyncio.wait_for(result.communicate(), timeout=30)
             
             if result.returncode == 0:
-                return stdout.decode('utf-8', errors='ignore')
+                output = stdout.decode('utf-8', errors='ignore')
+                
+                # If no logs found, provide helpful message
+                if not output.strip():
+                    return f"-- No entries found for service '{service_name}' --\n\nThis could mean:\n1. Service name is incorrect\n2. No recent activity\n3. Insufficient permissions\n\nTry: !debuglogs permissions"
+                
+                return output
             else:
-                logging.error(f"Journal command failed: {stderr.decode()}")
-                return None
+                error_msg = stderr.decode('utf-8', errors='ignore')
+                logging.error(f"Journal command failed for service {service_name}: {error_msg}")
+                
+                # Try auto-detection if the configured service failed
+                if service_name != "red-discordbot":
+                    auto_service = await self._auto_detect_service_name()
+                    if auto_service and auto_service != service_name:
+                        logging.info(f"Retrying with auto-detected service: {auto_service}")
+                        return await self._get_journal_logs(auto_service, lines, since, until)
+                
+                return f"-- Error accessing journal for service '{service_name}' --\n{error_msg}\n\nTry: !debuglogs config service <correct_service_name>"
                 
         except (asyncio.TimeoutError, subprocess.SubprocessError) as e:
             logging.error(f"Failed to get journal logs: {e}")
-            return None
+            return f"-- Error retrieving journal logs --\n{str(e)}"
     
     async def _get_system_resources(self) -> Dict[str, Any]:
         """
@@ -1854,6 +1955,86 @@ class DebugLogs(commands.Cog):
             )
         
         await ctx.send(embed=embed)
+    
+    @debug_logs.command(name="autosetup")
+    async def logs_autosetup(self, ctx):
+        """
+        Automatically configure the debug_logs cog for Ubuntu VPS.
+        Detects and configures the correct systemd service name.
+        """
+        setup_embed = discord.Embed(
+            title="🔧 Auto-Setup for Ubuntu VPS",
+            description="Attempting to automatically configure debug_logs...",
+            color=discord.Color.blue()
+        )
+        setup_msg = await ctx.send(embed=setup_embed)
+        
+        results = []
+        
+        # Step 1: Check journal availability
+        if self.journal_available:
+            results.append("✅ systemd journal is available")
+        else:
+            results.append("❌ systemd journal not available - requires `systemd-journal` group membership")
+        
+        # Step 2: Auto-detect service name
+        detected_service = await self._auto_detect_service_name()
+        if detected_service:
+            results.append(f"✅ Auto-detected service: `{detected_service}`")
+            
+            # Configure the detected service
+            await self.config.guild(ctx.guild).service_name.set(detected_service)
+            results.append(f"✅ Configured service name: `{detected_service}`")
+        else:
+            results.append("❌ Could not auto-detect Red-DiscordBot service")
+            results.append("💡 Manual configuration required: `!debuglogs config service <service_name>`")
+        
+        # Step 3: Enable journal fallback
+        await self.config.guild(ctx.guild).journal_fallback.set(True)
+        results.append("✅ Enabled journal fallback")
+        
+        # Step 4: Test journal access
+        if detected_service and self.journal_available:
+            test_logs = await self._get_journal_logs(detected_service, lines=5)
+            if test_logs and "-- No entries" not in test_logs and "-- Error" not in test_logs:
+                results.append("✅ Journal access test successful")
+            else:
+                results.append("⚠️ Journal access test failed - check permissions")
+        
+        # Step 5: Check service status
+        if detected_service:
+            service_status = await self._get_service_status(detected_service)
+            if 'error' not in service_status:
+                status = service_status.get('status', 'unknown')
+                if status == 'active':
+                    results.append(f"✅ Service `{detected_service}` is active")
+                else:
+                    results.append(f"⚠️ Service `{detected_service}` status: {status}")
+            else:
+                results.append(f"❌ Could not check service status: {service_status['error']}")
+        
+        # Create final result embed
+        final_embed = discord.Embed(
+            title="🔧 Auto-Setup Results",
+            color=discord.Color.green() if detected_service else discord.Color.orange()
+        )
+        
+        final_embed.description = "\n".join(results)
+        
+        if detected_service:
+            final_embed.add_field(
+                name="✅ Setup Complete",
+                value=f"Your debug_logs cog is now configured for Ubuntu VPS!\n\n**Next steps:**\n• Try: `!debuglogs journal 10`\n• Try: `!debuglogs service_status`\n• Try: `!debuglogs permissions`",
+                inline=False
+            )
+        else:
+            final_embed.add_field(
+                name="⚠️ Manual Setup Required",
+                value="Auto-detection failed. Please:\n1. Find your service name: `systemctl list-units | grep red`\n2. Configure it: `!debuglogs config service <service_name>`\n3. Test: `!debuglogs journal 10`",
+                inline=False
+            )
+        
+        await setup_msg.edit(embed=final_embed)
 
     @debug_logs.group(name="config")
     @checks.admin_or_permissions(manage_guild=True)
