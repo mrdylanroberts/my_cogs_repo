@@ -22,7 +22,6 @@ except ImportError:
     grp = None
     pwd = None
 
-import discord
 from redbot.core import commands, checks, Config
 from redbot.core.bot import Red
 from redbot.core.utils.chat_formatting import box, pagify
@@ -1995,12 +1994,15 @@ class DebugLogs(commands.Cog):
                                 setup_results.append("❌ Failed to add user to systemd-journal group")
                     except KeyError:
                         setup_results.append("⚠️ systemd-journal group not found")
-                except Exception as e:
-                    setup_results.append(f"❌ Group configuration failed: {str(e)[:100]}")
+                    except Exception as e:
+                        setup_results.append(f"❌ Group configuration failed: {str(e)[:100]}")
             except Exception as e:
-                setup_results.append(f"❌ User group configuration failed: {str(e)[:100]}")
-            
-            # 4. Create log directories
+                setup_results.append(f"❌ User group configuration failed: {str(e)[:100]}")        
+        except Exception as e:
+            setup_results.append(f"❌ User group setup failed: {str(e)[:100]}")
+        
+        # 4. Create log directories
+        try:
             setup_results.append("📁 Creating log directories...")
             await self._update_setup_status(status_msg, setup_results)
             
@@ -2048,20 +2050,22 @@ class DebugLogs(commands.Cog):
                             setup_results.append(f"✅ User log directory already exists: {log_dir}")
                 except Exception as e:
                     setup_results.append(f"❌ Failed to create {log_dir}: {str(e)[:100]}")
+        except Exception as e:
+            setup_results.append(f"❌ Log directories setup failed: {str(e)[:100]}")
             
-            # 5. Configure log rotation
+        # 5. Configure log rotation
+        try:
             setup_results.append("🔄 Configuring log rotation...")
             await self._update_setup_status(status_msg, setup_results)
             
-            try:
-                if not UNIX_AVAILABLE:
-                    setup_results.append("⚠️ Log rotation not available on Windows")
-                    await self._update_setup_status(status_msg, setup_results)
-                else:
-                    current_user = pwd.getpwuid(os.getuid()).pw_name
-                    home_dir = os.path.expanduser("~")
-                    
-                    logrotate_config = f"""# Red-DiscordBot log rotation configuration
+            if not UNIX_AVAILABLE:
+                setup_results.append("⚠️ Log rotation not available on Windows")
+                await self._update_setup_status(status_msg, setup_results)
+            else:
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                home_dir = os.path.expanduser("~")
+                
+                logrotate_config = f"""# Red-DiscordBot log rotation configuration
 {home_dir}/.local/share/Red-DiscordBot/logs/*.log {{
     daily
     missingok
@@ -2083,10 +2087,10 @@ class DebugLogs(commands.Cog):
     copytruncate
     su {current_user} {current_user}
 }}"""
-                    
-                    # Write logrotate config
-                    result = await asyncio.create_subprocess_exec(
-                        'sudo', 'tee', '/etc/logrotate.d/red-discordbot',
+                
+                # Write logrotate config
+                result = await asyncio.create_subprocess_exec(
+                    'sudo', 'tee', '/etc/logrotate.d/red-discordbot',
                     input=logrotate_config.encode(),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
@@ -2097,20 +2101,20 @@ class DebugLogs(commands.Cog):
                     setup_results.append("✅ Log rotation configured successfully")
                 else:
                     setup_results.append("❌ Failed to configure log rotation")
-            except Exception as e:
-                setup_results.append(f"❌ Log rotation configuration failed: {str(e)[:100]}")
+        except Exception as e:
+            setup_results.append(f"❌ Log rotation configuration failed: {str(e)[:100]}")
             
-            # 6. Create systemd service template
+        # 6. Create systemd service template
+        try:
             setup_results.append("🔧 Creating systemd service template...")
             await self._update_setup_status(status_msg, setup_results)
             
-            try:
-                if not UNIX_AVAILABLE:
-                    setup_results.append("⚠️ Systemd service not available on Windows")
-                    await self._update_setup_status(status_msg, setup_results)
-                else:
-                    current_user = pwd.getpwuid(os.getuid()).pw_name
-                    home_dir = os.path.expanduser("~")
+            if not UNIX_AVAILABLE:
+                setup_results.append("⚠️ Systemd service not available on Windows")
+                await self._update_setup_status(status_msg, setup_results)
+            else:
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                home_dir = os.path.expanduser("~")
                 
                 service_template = f"""# Red-DiscordBot systemd service template
 # Copy this to /etc/systemd/system/red-discordbot.service and customize
@@ -2150,55 +2154,51 @@ WantedBy=multi-user.target"""
                     f.write(service_template)
                 
                 setup_results.append(f"✅ Created systemd service template: {service_file}")
-            except Exception as e:
-                setup_results.append(f"❌ Service template creation failed: {str(e)[:100]}")
+        except Exception as e:
+            setup_results.append(f"❌ Service template creation failed: {str(e)[:100]}")
             
-            # 7. Test journal access
+        # 7. Test journal access
+        try:
             setup_results.append("🧪 Testing journal access...")
             await self._update_setup_status(status_msg, setup_results)
             
-            try:
-                result = await asyncio.create_subprocess_exec(
-                    'journalctl', '--no-pager', '-n', '1',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                await asyncio.wait_for(result.communicate(), timeout=10)
-                
-                if result.returncode == 0:
-                    setup_results.append("✅ Journal access is working")
-                else:
-                    setup_results.append("⚠️ Journal access test failed - may need to restart bot")
-            except Exception as e:
-                setup_results.append(f"⚠️ Journal access test failed: {str(e)[:100]}")
+            result = await asyncio.create_subprocess_exec(
+                'journalctl', '--no-pager', '-n', '1',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await asyncio.wait_for(result.communicate(), timeout=10)
             
-            # 8. Create test log entry
-            try:
-                result = await asyncio.create_subprocess_exec(
-                    'logger', '-t', 'red-discordbot-test', 'Debug logs cog setup completed successfully',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                await result.communicate()
-                setup_results.append("✅ Test log entry created")
-            except Exception:
-                setup_results.append("⚠️ Could not create test log entry")
-            
-            # Final status
-            setup_results.append("")
-            setup_results.append("🎉 Ubuntu VPS setup completed!")
-            setup_results.append("")
-            setup_results.append("📋 Next steps:")
-            setup_results.append("1. If you saw group change warnings, restart the bot")
-            setup_results.append("2. Configure the cog: `!debuglogs config service red-discordbot`")
-            setup_results.append("3. Enable journal fallback: `!debuglogs config journal_fallback true`")
-            setup_results.append("4. Test journal access: `!debuglogs journal 50`")
-            
-            await self._update_setup_status(status_msg, setup_results, final=True)
-            
+            if result.returncode == 0:
+                setup_results.append("✅ Journal access is working")
+            else:
+                setup_results.append("⚠️ Journal access test failed - may need to restart bot")
         except Exception as e:
-            setup_results.append(f"❌ Setup failed with error: {str(e)}")
-            await self._update_setup_status(status_msg, setup_results, final=True)
+            setup_results.append(f"⚠️ Journal access test failed: {str(e)[:100]}")
+            
+        # 8. Create test log entry
+        try:
+            result = await asyncio.create_subprocess_exec(
+                'logger', '-t', 'red-discordbot-test', 'Debug logs cog setup completed successfully',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await result.communicate()
+            setup_results.append("✅ Test log entry created")
+        except Exception:
+            setup_results.append("⚠️ Could not create test log entry")
+            
+        # Final status
+        setup_results.append("")
+        setup_results.append("🎉 Ubuntu VPS setup completed!")
+        setup_results.append("")
+        setup_results.append("📋 Next steps:")
+        setup_results.append("1. If you saw group change warnings, restart the bot")
+        setup_results.append("2. Configure the cog: `!debuglogs config service red-discordbot`")
+        setup_results.append("3. Enable journal fallback: `!debuglogs config journal_fallback true`")
+        setup_results.append("4. Test journal access: `!debuglogs journal 50`")
+        
+        await self._update_setup_status(status_msg, setup_results, final=True)
     
     async def _update_setup_status(self, message, results, final=False):
         """
