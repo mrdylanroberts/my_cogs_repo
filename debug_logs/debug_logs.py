@@ -1986,13 +1986,13 @@ class DebugLogs(commands.Cog):
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE
                             )
-                        await asyncio.wait_for(result.communicate(), timeout=30)
-                        
-                        if result.returncode == 0:
-                            setup_results.append(f"✅ Added {current_user} to systemd-journal group")
-                            setup_results.append("⚠️ You may need to restart the bot for group changes to take effect")
-                        else:
-                            setup_results.append("❌ Failed to add user to systemd-journal group")
+                            await asyncio.wait_for(result.communicate(), timeout=30)
+                            
+                            if result.returncode == 0:
+                                setup_results.append(f"✅ Added {current_user} to systemd-journal group")
+                                setup_results.append("⚠️ You may need to restart the bot for group changes to take effect")
+                            else:
+                                setup_results.append("❌ Failed to add user to systemd-journal group")
                     except KeyError:
                         setup_results.append("⚠️ systemd-journal group not found")
                 except Exception as e:
