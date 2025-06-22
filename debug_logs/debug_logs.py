@@ -161,6 +161,22 @@ class DebugLogs(commands.Cog):
             "/var/log/discord-bot.log"
         ]
         
+        # Add bot instance-specific paths (discovered pattern)
+        import glob
+        try:
+            # Search for bot instance directories and their log files
+            instance_patterns = [
+                f"/home/{current_user}/.local/share/Red-DiscordBot/data/*/core/logs/red*.log",
+                f"{user_home}/.local/share/Red-DiscordBot/data/*/core/logs/red*.log",
+                "/home/*/.local/share/Red-DiscordBot/data/*/core/logs/red*.log"
+            ]
+            
+            for pattern in instance_patterns:
+                matching_files = glob.glob(pattern)
+                ubuntu_paths.extend(matching_files)
+        except Exception:
+            pass
+        
         # Standard Red-DiscordBot log locations
         standard_paths = [
             os.path.join(os.getcwd(), "logs", "red.log"),
@@ -187,6 +203,14 @@ class DebugLogs(commands.Cog):
             "/var/log/red-discordbot",
             "/var/log"
         ]
+        
+        # Add bot instance-specific search directories
+        try:
+            instance_dirs = glob.glob(f"/home/{current_user}/.local/share/Red-DiscordBot/data/*/core/logs")
+            instance_dirs.extend(glob.glob(f"{user_home}/.local/share/Red-DiscordBot/data/*/core/logs"))
+            search_dirs.extend(instance_dirs)
+        except Exception:
+            pass
         
         for search_dir in search_dirs:
             if os.path.exists(search_dir):
