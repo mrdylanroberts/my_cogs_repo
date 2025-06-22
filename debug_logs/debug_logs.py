@@ -1936,8 +1936,8 @@ class DebugLogs(commands.Cog):
                     
                     if result.returncode == 0:
                         setup_results.append("✅ System packages installed successfully")
-                else:
-                    setup_results.append("⚠️ System packages installation had issues")
+                    else:
+                        setup_results.append("⚠️ System packages installation had issues")
             except asyncio.TimeoutError:
                 setup_results.append("⚠️ System packages installation timed out")
             except Exception as e:
@@ -1985,7 +1985,7 @@ class DebugLogs(commands.Cog):
                                 'sudo', 'usermod', '-a', '-G', 'systemd-journal', current_user,
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE
-                        )
+                            )
                         await asyncio.wait_for(result.communicate(), timeout=30)
                         
                         if result.returncode == 0:
@@ -1993,10 +1993,10 @@ class DebugLogs(commands.Cog):
                             setup_results.append("⚠️ You may need to restart the bot for group changes to take effect")
                         else:
                             setup_results.append("❌ Failed to add user to systemd-journal group")
-                except KeyError:
-                    setup_results.append("⚠️ systemd-journal group not found")
-            except Exception as e:
-                setup_results.append(f"❌ Group configuration failed: {str(e)[:100]}")
+                    except KeyError:
+                        setup_results.append("⚠️ systemd-journal group not found")
+                except Exception as e:
+                    setup_results.append(f"❌ Group configuration failed: {str(e)[:100]}")
             
             # 4. Create log directories
             setup_results.append("📁 Creating log directories...")
