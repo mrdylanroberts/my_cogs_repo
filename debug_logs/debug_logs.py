@@ -2097,12 +2097,14 @@ class DebugLogs(commands.Cog):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
-                await result.communicate(input=logrotate_config.encode())
+                stdout, stderr = await result.communicate(input=logrotate_config.encode())
                 
                 if result.returncode == 0:
                     setup_results.append("✅ Log rotation configured successfully")
                 else:
-                    setup_results.append("❌ Failed to configure log rotation")
+                    error_msg = stderr.decode().strip() if stderr else "Unknown error"
+                    setup_results.append(f"❌ Failed to configure log rotation: {error_msg[:100]}")
+                    setup_results.append("💡 Try running manually: sudo tee /etc/logrotate.d/red-discordbot")
         except Exception as e:
             setup_results.append(f"❌ Log rotation configuration failed: {str(e)[:100]}")
             
