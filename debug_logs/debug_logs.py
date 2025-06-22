@@ -1997,8 +1997,8 @@ class DebugLogs(commands.Cog):
                         setup_results.append("⚠️ systemd-journal group not found")
                 except Exception as e:
                     setup_results.append(f"❌ Group configuration failed: {str(e)[:100]}")
-        except Exception as e:
-            setup_results.append(f"❌ User group configuration failed: {str(e)[:100]}")
+            except Exception as e:
+                setup_results.append(f"❌ User group configuration failed: {str(e)[:100]}")
             
             # 4. Create log directories
             setup_results.append("📁 Creating log directories...")
