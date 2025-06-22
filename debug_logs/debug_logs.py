@@ -12,8 +12,15 @@ from io import StringIO
 import time
 from pathlib import Path
 import json
-import grp
-import pwd
+try:
+    import grp
+    import pwd
+    UNIX_AVAILABLE = True
+except ImportError:
+    # Windows doesn't have grp/pwd modules
+    UNIX_AVAILABLE = False
+    grp = None
+    pwd = None
 
 import discord
 from redbot.core import commands, checks, Config
@@ -58,6 +65,9 @@ class DebugLogs(commands.Cog):
         """
         Check if systemd journal is available and accessible.
         """
+        if not UNIX_AVAILABLE:
+            return False
+            
         try:
             # Check if journalctl command exists
             result = subprocess.run(['which', 'journalctl'], 
@@ -87,13 +97,17 @@ class DebugLogs(commands.Cog):
         }
         
         try:
-            # Check journal group membership
-            current_user = pwd.getpwuid(os.getuid()).pw_name
-            try:
-                journal_group = grp.getgrnam('systemd-journal')
-                permissions['journal_access'] = current_user in journal_group.gr_mem
-            except KeyError:
-                pass
+            # Check journal group membership (Unix/Linux only)
+            if UNIX_AVAILABLE:
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                try:
+                    journal_group = grp.getgrnam('systemd-journal')
+                    permissions['journal_access'] = current_user in journal_group.gr_mem
+                except KeyError:
+                    pass
+            else:
+                # On Windows, journal access is not available
+                permissions['journal_access'] = False
             
             # Check log directory access
             log_dirs = ['/var/log', '/var/log/red-discordbot']
@@ -102,13 +116,16 @@ class DebugLogs(commands.Cog):
                     permissions['log_directory_read'] = True
                     break
             
-            # Check systemd service access
-            try:
-                result = subprocess.run(['systemctl', 'is-active', 'red-discordbot'], 
-                                      capture_output=True, text=True, timeout=5)
-                permissions['systemd_service_status'] = True
-            except (subprocess.SubprocessError, subprocess.TimeoutExpired):
-                pass
+            # Check systemd service access (Unix/Linux only)
+            if UNIX_AVAILABLE:
+                try:
+                    result = subprocess.run(['systemctl', 'is-active', 'red-discordbot'], 
+                                          capture_output=True, text=True, timeout=5)
+                    permissions['systemd_service_status'] = True
+                except (subprocess.SubprocessError, subprocess.TimeoutExpired):
+                    pass
+            else:
+                permissions['systemd_service_status'] = False
                 
         except Exception:
             pass
@@ -186,7 +203,7 @@ class DebugLogs(commands.Cog):
         """
         Get logs from systemd journal for Ubuntu VPS.
         """
-        if not self.journal_available:
+        if not UNIX_AVAILABLE or not self.journal_available:
             return None
         
         try:
@@ -268,6 +285,9 @@ class DebugLogs(commands.Cog):
         """
         Get systemd service status for Ubuntu VPS.
         """
+        if not UNIX_AVAILABLE:
+            return {'status': 'unavailable', 'error': 'systemctl not available on Windows'}
+            
         try:
             # Get service status
             status_cmd = ['systemctl', 'is-active', service_name]
@@ -1894,24 +1914,28 @@ class DebugLogs(commands.Cog):
             await self._update_setup_status(status_msg, setup_results)
             
             try:
-                # Update package list
-                result = await asyncio.create_subprocess_exec(
-                    'sudo', 'apt', 'update',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                await asyncio.wait_for(result.communicate(), timeout=60)
-                
-                # Install packages
-                result = await asyncio.create_subprocess_exec(
-                    'sudo', 'apt', 'install', '-y', 'python3-pip', 'python3-dev', 'build-essential',
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-                await asyncio.wait_for(result.communicate(), timeout=120)
-                
-                if result.returncode == 0:
-                    setup_results.append("✅ System packages installed successfully")
+                if not UNIX_AVAILABLE:
+                    setup_results.append("⚠️ Package management not available on Windows")
+                    await self._update_setup_status(status_msg, setup_results)
+                else:
+                    # Update package list
+                    result = await asyncio.create_subprocess_exec(
+                        'sudo', 'apt', 'update',
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    await asyncio.wait_for(result.communicate(), timeout=60)
+                    
+                    # Install packages
+                    result = await asyncio.create_subprocess_exec(
+                        'sudo', 'apt', 'install', '-y', 'python3-pip', 'python3-dev', 'build-essential',
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    await asyncio.wait_for(result.communicate(), timeout=120)
+                    
+                    if result.returncode == 0:
+                        setup_results.append("✅ System packages installed successfully")
                 else:
                     setup_results.append("⚠️ System packages installation had issues")
             except asyncio.TimeoutError:
@@ -1943,20 +1967,24 @@ class DebugLogs(commands.Cog):
             await self._update_setup_status(status_msg, setup_results)
             
             try:
-                # Get current user
-                current_user = pwd.getpwuid(os.getuid()).pw_name
-                
-                # Check if already in group
-                try:
-                    journal_group = grp.getgrnam('systemd-journal')
-                    if current_user in journal_group.gr_mem:
-                        setup_results.append(f"✅ User {current_user} already in systemd-journal group")
-                    else:
-                        # Add to group
-                        result = await asyncio.create_subprocess_exec(
-                            'sudo', 'usermod', '-a', '-G', 'systemd-journal', current_user,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE
+                if not UNIX_AVAILABLE:
+                    setup_results.append("⚠️ Unix user management not available on Windows")
+                    await self._update_setup_status(status_msg, setup_results)
+                else:
+                    # Get current user
+                    current_user = pwd.getpwuid(os.getuid()).pw_name
+                    
+                    # Check if already in group
+                    try:
+                        journal_group = grp.getgrnam('systemd-journal')
+                        if current_user in journal_group.gr_mem:
+                            setup_results.append(f"✅ User {current_user} already in systemd-journal group")
+                        else:
+                            # Add to group
+                            result = await asyncio.create_subprocess_exec(
+                                'sudo', 'usermod', '-a', '-G', 'systemd-journal', current_user,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
                         )
                         await asyncio.wait_for(result.communicate(), timeout=30)
                         
@@ -1983,25 +2011,30 @@ class DebugLogs(commands.Cog):
             for log_dir in log_dirs:
                 try:
                     if log_dir == "/var/log/red-discordbot":
-                        # System directory - needs sudo
+                        # System directory - needs sudo (Unix/Linux only)
                         if not os.path.exists(log_dir):
-                            result = await asyncio.create_subprocess_exec(
-                                'sudo', 'mkdir', '-p', log_dir,
-                                stdout=asyncio.subprocess.PIPE,
-                                stderr=asyncio.subprocess.PIPE
-                            )
-                            await result.communicate()
-                            
-                            # Change ownership
-                            current_user = pwd.getpwuid(os.getuid()).pw_name
-                            result = await asyncio.create_subprocess_exec(
-                                'sudo', 'chown', f'{current_user}:{current_user}', log_dir,
-                                stdout=asyncio.subprocess.PIPE,
-                                stderr=asyncio.subprocess.PIPE
-                            )
-                            await result.communicate()
-                            
-                            setup_results.append(f"✅ Created system log directory: {log_dir}")
+                            if UNIX_AVAILABLE:
+                                result = await asyncio.create_subprocess_exec(
+                                    'sudo', 'mkdir', '-p', log_dir,
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE
+                                )
+                                await result.communicate()
+                                
+                                # Change ownership
+                                current_user = pwd.getpwuid(os.getuid()).pw_name
+                                result = await asyncio.create_subprocess_exec(
+                                    'sudo', 'chown', f'{current_user}:{current_user}', log_dir,
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE
+                                )
+                                await result.communicate()
+                                
+                                setup_results.append(f"✅ Created system log directory: {log_dir}")
+                            else:
+                                # On Windows, create directory without sudo/chown
+                                os.makedirs(log_dir, exist_ok=True)
+                                setup_results.append(f"✅ Created log directory: {log_dir}")
                         else:
                             setup_results.append(f"✅ System log directory already exists: {log_dir}")
                     else:
@@ -2019,10 +2052,14 @@ class DebugLogs(commands.Cog):
             await self._update_setup_status(status_msg, setup_results)
             
             try:
-                current_user = pwd.getpwuid(os.getuid()).pw_name
-                home_dir = os.path.expanduser("~")
-                
-                logrotate_config = f"""# Red-DiscordBot log rotation configuration
+                if not UNIX_AVAILABLE:
+                    setup_results.append("⚠️ Log rotation not available on Windows")
+                    await self._update_setup_status(status_msg, setup_results)
+                else:
+                    current_user = pwd.getpwuid(os.getuid()).pw_name
+                    home_dir = os.path.expanduser("~")
+                    
+                    logrotate_config = f"""# Red-DiscordBot log rotation configuration
 {home_dir}/.local/share/Red-DiscordBot/logs/*.log {{
     daily
     missingok
@@ -2044,10 +2081,10 @@ class DebugLogs(commands.Cog):
     copytruncate
     su {current_user} {current_user}
 }}"""
-                
-                # Write logrotate config
-                result = await asyncio.create_subprocess_exec(
-                    'sudo', 'tee', '/etc/logrotate.d/red-discordbot',
+                    
+                    # Write logrotate config
+                    result = await asyncio.create_subprocess_exec(
+                        'sudo', 'tee', '/etc/logrotate.d/red-discordbot',
                     input=logrotate_config.encode(),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
@@ -2066,8 +2103,12 @@ class DebugLogs(commands.Cog):
             await self._update_setup_status(status_msg, setup_results)
             
             try:
-                current_user = pwd.getpwuid(os.getuid()).pw_name
-                home_dir = os.path.expanduser("~")
+                if not UNIX_AVAILABLE:
+                    setup_results.append("⚠️ Systemd service not available on Windows")
+                    await self._update_setup_status(status_msg, setup_results)
+                else:
+                    current_user = pwd.getpwuid(os.getuid()).pw_name
+                    home_dir = os.path.expanduser("~")
                 
                 service_template = f"""# Red-DiscordBot systemd service template
 # Copy this to /etc/systemd/system/red-discordbot.service and customize
