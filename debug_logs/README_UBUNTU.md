@@ -4,12 +4,18 @@ This guide covers the enhanced features specifically designed for Red-DiscordBot
 
 ## 🚀 Quick Setup
 
-### Automated Setup
-```bash
-# Make the setup script executable and run it
-chmod +x ubuntu_setup.sh
-./ubuntu_setup.sh
+### Automated Setup (Recommended)
 ```
+# Run the automated setup command in Discord
+!debuglogs autosetup
+```
+
+This command will:
+- Automatically detect your Red-DiscordBot service name
+- Configure the cog with the detected service
+- Enable journal fallback mode
+- Test journal access and service status
+- Provide guided next steps
 
 ### Manual Setup
 If you prefer manual setup, follow the steps in the [Manual Configuration](#manual-configuration) section.

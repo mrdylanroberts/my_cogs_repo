@@ -215,34 +215,6 @@ class EmailNews(commands.Cog):
         urls = re.findall(url_pattern, content)
         return urls
     
-    def extract_real_url_from_tracking(self, tracking_url: str) -> str:
-        """Extract the real destination URL from a tracking URL."""
-        try:
-            # For TLDR tracking URLs, the real URL is encoded in the path
-            if 'tracking.tldrnewsletter.com/CL0/' in tracking_url:
-                # Extract the encoded URL part
-                parts = tracking_url.split('/CL0/')
-                if len(parts) > 1:
-                    encoded_part = parts[1].split('/')[0]
-                    # URL decode the encoded part
-                    import urllib.parse
-                    decoded_url = urllib.parse.unquote(encoded_part)
-                    # Remove any remaining URL encoding
-                    decoded_url = urllib.parse.unquote(decoded_url)
-                    return decoded_url
-            
-            # For other tracking URLs with utm_source, try to find the original URL
-            if 'utm_source' in tracking_url:
-                # Remove UTM parameters
-                base_url = tracking_url.split('?')[0]
-                return base_url
-            
-            # If we can't extract, return the original URL
-            return tracking_url
-        except Exception as e:
-            log.warning(f"Failed to extract real URL from tracking URL: {e}")
-            return tracking_url
-
     def convert_html_to_text_with_links(self, html_content: str) -> str:
         """Convert HTML content to text while preserving inline links and filtering dangerous links."""
         if not html_content:
@@ -283,16 +255,9 @@ class EmailNews(commands.Cog):
                         if is_dangerous:
                             link.replace_with(f"{text} [LINK REMOVED FOR SECURITY]")
                         elif re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
-                            # Extract real URL and format as markdown link
-                            real_url = self.extract_real_url_from_tracking(url)
-                            link.replace_with(f"**[{text}]({real_url})**")
+                            link.replace_with(f"{text} {url}")
                         else:
-                            # Extract real URL if it's a tracking URL
-                            if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
-                                real_url = self.extract_real_url_from_tracking(url)
-                                link.replace_with(f"[{text}]({real_url})")
-                            else:
-                                link.replace_with(f"[{text}]({url})")
+                            link.replace_with(f"{text} ({url})")
                     else:
                         link.decompose()
                 
@@ -352,7 +317,8 @@ class EmailNews(commands.Cog):
                 html_content = re.sub(r'<div[^>]*max-height:\s*0[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
                 html_content = re.sub(r'<div[^>]*overflow:\s*hidden[^>]*>.*?</div>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
                 
-                # Define dangerous patterns for link filtering
+                # Filter out unsubscribe and dangerous tracking links for security
+                # But preserve reading time tracking links
                 dangerous_patterns = [
                     r'unsubscribe',
                     r'manage.*subscription',
@@ -360,59 +326,37 @@ class EmailNews(commands.Cog):
                     r'opt.*out'
                 ]
                 
-                # Convert <a href="url">text</a> to Discord markdown format with filtering
+                # Remove dangerous links but preserve safe ones
+                def filter_link(match):
+                    url = match.group(1)
+                    text = match.group(2)
+                    
+                    # Check if URL contains dangerous patterns
+                    for pattern in dangerous_patterns:
+                        if re.search(pattern, url, re.IGNORECASE):
+                            return f"{text} [LINK REMOVED FOR SECURITY]"
+                    
+                    # Check if this is a reading time link (contains tracking URL and reading time text)
+                    if re.search(r'tracking\.tldrnewsletter\.com', url, re.IGNORECASE) and re.search(r'\(\d+\s*min(?:ute)?\s*read\)', text, re.IGNORECASE):
+                        # Keep the format that enhance_reading_time_indicators expects
+                        return f"{text} {url}"
+                    
+                    # Keep other safe links in standard format
+                    return f"{text} ({url})"
+                
+                # Convert <a href="url">text</a> to text (url) with filtering
                 # Handle nested tags within links properly
                 def replace_link(match):
-                    try:
-                        url = match.group(1)
-                        inner_content = match.group(2)
-                        
-                        # Remove HTML tags from inner content
-                        clean_text = re.sub(r'<[^>]+>', '', inner_content)
-                        clean_text = html.unescape(clean_text.strip())
-                        
-                        # Check if URL contains dangerous patterns
-                        for pattern in dangerous_patterns:
-                            if re.search(pattern, url, re.IGNORECASE):
-                                return f"{clean_text} [LINK REMOVED FOR SECURITY]"
-                        
-                        # Handle paginated links with reading time
-                        # Pattern: Title (Page X) (Y minute read)
-                        page_time_pattern = r'^(.*?)\s*\(Page\s+(\d+)\)\s*\((\d+)\s+minute\s+read\)\s*$'
-                        page_time_match = re.match(page_time_pattern, clean_text, re.IGNORECASE)
-                        
-                        if page_time_match:
-                            title = page_time_match.group(1).strip()
-                            page_num = page_time_match.group(2)
-                            minutes = page_time_match.group(3)
-                            
-                            # Format as: **[Title (Page X)](URL)** (Y minute read)
-                            return f"**[{title} (Page {page_num})]({url})** ({minutes} minute read)"
-                        
-                        # Handle regular reading time links
-                        # Pattern: Title (X minute read)
-                        time_pattern = r'^(.*?)\s*\((\d+)\s+minute\s+read\)\s*$'
-                        time_match = re.match(time_pattern, clean_text, re.IGNORECASE)
-                        
-                        if time_match:
-                            title = time_match.group(1).strip()
-                            minutes = time_match.group(2)
-                            
-                            # Format as: **[Title](URL)** (X minute read)
-                            return f"**[{title}]({url})** ({minutes} minute read)"
-                        
-                        # Handle tracking URLs - extract the real URL and make them bold
-                        if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
-                            # Extract the real URL from tracking URL
-                            real_url = self.extract_real_url_from_tracking(url)
-                            return f"**[{clean_text}]({real_url})**"
-                        
-                        # Regular links
-                        return f"[{clean_text}]({url})"
-                    except Exception as e:
-                        log.warning(f"Error in replace_link function: {e}")
-                        # Return original match if there's an error
-                        return match.group(0)
+                    url = match.group(1)
+                    inner_content = match.group(2)
+                    
+                    # Remove HTML tags from inner content
+                    clean_text = re.sub(r'<[^>]+>', '', inner_content)
+                    clean_text = html.unescape(clean_text.strip())
+                    
+                    # Apply filtering
+                    fake_match = type('Match', (), {'group': lambda i: url if i == 1 else clean_text})()
+                    return filter_link(fake_match)
                 
                 html_content = re.sub(r'<a[^>]*href=["\']([^"\'>]+)["\'][^>]*>(.*?)</a>', 
                                     replace_link, html_content, flags=re.IGNORECASE | re.DOTALL)
@@ -500,48 +444,22 @@ class EmailNews(commands.Cog):
         return content
     
     def convert_text_links_to_discord_format(self, content: str) -> str:
-        """Convert text with URLs to Discord markdown links."""
+        """Convert text with URLs in parentheses to Discord markdown links."""
         if not content:
             return content
         
-        # Pattern 1: text followed by URL in parentheses: "text (https://example.com)"
-        link_pattern_parens = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
-        
-        # Pattern 2: reading time followed by URL: "(X minute read) https://example.com"
-        reading_time_pattern = r'(\([^\)]*minute read\))\s+(https?://[^\s]+)'
-        
-        # Pattern 3: title followed by reading time and URL: "Title (X minute read) https://example.com"
-        title_reading_time_pattern = r'([^\n]*?)\s+(\([^\)]*minute read\))\s+(https?://[^\s]+)'
-        
-        def convert_reading_time_link(match):
-            reading_time = match.group(1).strip()
-            url = match.group(2).strip()
-            # Extract real URL from tracking URL if needed
-            if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
-                url = self.extract_real_url_from_tracking(url)
-            return f'[{reading_time}]({url})'
-        
-        def convert_title_reading_time_link(match):
-            title = match.group(1).strip()
-            reading_time = match.group(2).strip()
-            url = match.group(3).strip()
-            # Extract real URL from tracking URL if needed
-            if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
-                url = self.extract_real_url_from_tracking(url)
-            return f'**[{title}]({url})** {reading_time}'
+        # Pattern to find text followed by URL in parentheses
+        # This handles the format: "text (https://example.com)"
+        link_pattern = r'([^\n\(]+?)\s*\(([https?://][^\)\s]+)\)'
         
         def convert_to_markdown_link(match):
             text = match.group(1).strip()
             url = match.group(2).strip()
-            # Extract real URL from tracking URL if needed
-            if 'tracking.tldrnewsletter.com' in url or 'utm_source' in url:
-                url = self.extract_real_url_from_tracking(url)
+            # Convert to Discord markdown link format
             return f'[{text}]({url})'
         
-        # Apply conversions in order of specificity
-        content = re.sub(title_reading_time_pattern, convert_title_reading_time_link, content)
-        content = re.sub(reading_time_pattern, convert_reading_time_link, content)
-        content = re.sub(link_pattern_parens, convert_to_markdown_link, content)
+        # Apply the conversion
+        content = re.sub(link_pattern, convert_to_markdown_link, content)
         
         return content
     
@@ -964,15 +882,14 @@ class EmailNews(commands.Cog):
                                         content = "Could not decode email content."
                                 
                                 # If we have HTML content, try to extract better formatted text with inline links
-                                html_processed = False
                                 if html_content and len(html_content.strip()) > len(content.strip()):
                                     content = self.convert_html_to_text_with_links(html_content)
-                                    html_processed = True
                                 
-                                # Convert text links to clickable Discord format only if HTML wasn't processed
-                                # (HTML processing already creates proper markdown links)
-                                if not html_processed:
-                                    content = self.convert_text_links_to_discord_format(content)
+                                # Enhance reading time indicators to make them more prominent
+                                content = self.enhance_reading_time_indicators(content)
+                                
+                                # Convert text links to clickable Discord format
+                                content = self.convert_text_links_to_discord_format(content)
                                 
                                 # Clean and process the content
                                 cleaned_content = self.clean_email_content(content)

@@ -149,18 +149,12 @@ The cog now supports flexible command chaining for even more powerful filtering:
 
 For enhanced Ubuntu VPS features, run the automated setup script:
 
-```bash
-# Navigate to the cog directory
-cd ~/.local/share/Red-DiscordBot/cogs/debug_logs/
-
-# Make the setup script executable
-chmod +x ubuntu_setup.sh
-
-# Run the setup script
-./ubuntu_setup.sh
+```
+# Run the automated setup command in Discord
+!debuglogs autosetup
 ```
 
-Or follow the manual setup guide in [README_UBUNTU.md](README_UBUNTU.md).
+This will automatically detect and configure your Ubuntu VPS setup. For manual configuration, see [README_UBUNTU.md](README_UBUNTU.md).
 
 **Ubuntu VPS Features Include:**
 - systemd journal integration
