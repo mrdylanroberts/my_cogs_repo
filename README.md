@@ -7,6 +7,7 @@
 | Cog | Description | Author |
 |-----|-------------|--------|
 | **CommandBatch** | Execute multiple commands in sequence with custom profiles | mrdylanroberts |
+| **DebugLogs** | Advanced log management and Ubuntu VPS setup for Red-DiscordBot | mrdylanroberts |
 | **EmailNews** | Forward emails from specified senders to Discord channels | mrdylanroberts |
 | **Glossary** | Interactive cybersecurity glossary with user contributions | mrdylanroberts |
 | **HelpDetector** | Detects help-related messages and directs users to the help channel | mrdylanroberts |
@@ -38,6 +39,19 @@ Execute multiple commands in sequence with custom profiles. Perfect for testing 
 - Create custom command profiles
 - Execute multiple commands with a single command
 - Ideal for automation and testing
+
+### DebugLogs
+Comprehensive log management system with integrated Ubuntu VPS setup for enhanced Red-DiscordBot functionality.
+
+**Features:**
+- Advanced log retrieval and analysis
+- Systemd journal integration for Ubuntu VPS
+- Automated Ubuntu VPS setup with `!debuglogs ubuntu_setup`
+- System resource monitoring
+- Service status checking
+- Log search and filtering capabilities
+- Real-time setup progress with error handling
+- Automated package installation and configuration
 
 ### EmailNews
 Securely forward emails from specific senders to designated Discord channels with encrypted credential storage.
