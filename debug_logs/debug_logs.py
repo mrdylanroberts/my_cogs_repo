@@ -135,10 +135,26 @@ class DebugLogs(commands.Cog):
         """
         Get the path to the Red-DiscordBot log file with Ubuntu-specific paths and security validation.
         """
+        # Get current user for dynamic path detection
+        try:
+            if UNIX_AVAILABLE:
+                current_user = pwd.getpwuid(os.getuid()).pw_name
+                user_home = os.path.expanduser("~")
+            else:
+                current_user = "redbot"
+                user_home = os.path.expanduser("~")
+        except:
+            current_user = "redbot"
+            user_home = os.path.expanduser("~")
+        
         # Ubuntu/Linux specific paths (prioritized for VPS)
         ubuntu_paths = [
             "/var/log/red-discordbot/red.log",
             "/var/log/red-discordbot/bot.log",
+            f"/home/{current_user}/.local/share/Red-DiscordBot/logs/red.log",
+            f"{user_home}/.local/share/Red-DiscordBot/logs/red.log",
+            f"/home/{current_user}/redbot/logs/red.log",
+            f"{user_home}/redbot/logs/red.log",
             "/home/redbot/.local/share/Red-DiscordBot/logs/red.log",
             "/opt/red-discordbot/logs/red.log",
             "/var/log/redbot.log",
@@ -161,12 +177,22 @@ class DebugLogs(commands.Cog):
                 return path
         
         # If no standard path found, try to find any .log file in common directories
-        search_dirs = [os.getcwd(), os.path.join(os.getcwd(), "logs")]
+        search_dirs = [
+            os.getcwd(), 
+            os.path.join(os.getcwd(), "logs"),
+            f"/home/{current_user}/.local/share/Red-DiscordBot/logs",
+            f"{user_home}/.local/share/Red-DiscordBot/logs",
+            f"/home/{current_user}/redbot/logs",
+            f"{user_home}/redbot/logs",
+            "/var/log/red-discordbot",
+            "/var/log"
+        ]
+        
         for search_dir in search_dirs:
             if os.path.exists(search_dir):
                 try:
                     for file in os.listdir(search_dir):
-                        if file.endswith(".log") and "red" in file.lower():
+                        if file.endswith(".log") and ("red" in file.lower() or "bot" in file.lower()):
                             full_path = os.path.join(search_dir, file)
                             if self._is_safe_path(full_path):
                                 return full_path
@@ -702,7 +728,28 @@ class DebugLogs(commands.Cog):
         log_path = self.get_log_file_path()
         
         if not log_path:
-            await ctx.send("❌ Could not locate the Red-DiscordBot log file.")
+            # Get debugging info about searched paths
+            try:
+                if UNIX_AVAILABLE:
+                    current_user = pwd.getpwuid(os.getuid()).pw_name
+                    user_home = os.path.expanduser("~")
+                else:
+                    current_user = "redbot"
+                    user_home = os.path.expanduser("~")
+            except:
+                current_user = "redbot"
+                user_home = os.path.expanduser("~")
+            
+            debug_msg = f"❌ Could not locate the Red-DiscordBot log file.\n\n"
+            debug_msg += f"**Searched paths:**\n"
+            debug_msg += f"• `/var/log/red-discordbot/red.log`\n"
+            debug_msg += f"• `/home/{current_user}/.local/share/Red-DiscordBot/logs/red.log`\n"
+            debug_msg += f"• `{user_home}/.local/share/Red-DiscordBot/logs/red.log`\n"
+            debug_msg += f"• `/home/{current_user}/redbot/logs/red.log`\n"
+            debug_msg += f"• Current directory: `{os.getcwd()}`\n\n"
+            debug_msg += f"**Manual check:** Run `find /home -name '*.log' -path '*red*' 2>/dev/null` to locate log files."
+            
+            await ctx.send(debug_msg)
             return
         
         try:
@@ -735,7 +782,28 @@ class DebugLogs(commands.Cog):
         log_path = self.get_log_file_path()
         
         if not log_path:
-            await ctx.send("❌ Could not locate the Red-DiscordBot log file.")
+            # Get debugging info about searched paths
+            try:
+                if UNIX_AVAILABLE:
+                    current_user = pwd.getpwuid(os.getuid()).pw_name
+                    user_home = os.path.expanduser("~")
+                else:
+                    current_user = "redbot"
+                    user_home = os.path.expanduser("~")
+            except:
+                current_user = "redbot"
+                user_home = os.path.expanduser("~")
+            
+            debug_msg = f"❌ Could not locate the Red-DiscordBot log file.\n\n"
+            debug_msg += f"**Searched paths:**\n"
+            debug_msg += f"• `/var/log/red-discordbot/red.log`\n"
+            debug_msg += f"• `/home/{current_user}/.local/share/Red-DiscordBot/logs/red.log`\n"
+            debug_msg += f"• `{user_home}/.local/share/Red-DiscordBot/logs/red.log`\n"
+            debug_msg += f"• `/home/{current_user}/redbot/logs/red.log`\n"
+            debug_msg += f"• Current directory: `{os.getcwd()}`\n\n"
+            debug_msg += f"**Manual check:** Run `find /home -name '*.log' -path '*red*' 2>/dev/null` to locate log files."
+            
+            await ctx.send(debug_msg)
             return
         
         try:
