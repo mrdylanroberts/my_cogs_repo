@@ -138,8 +138,7 @@ class VidTranscribe(commands.Cog):
             # Pattern 1: Look for transcript patterns in JavaScript
             patterns = [
                 r'"transcribed_text":\s*"([^"]+)"',
-                r'transcript["\']?:\s*["\']([^"\'\
-]+)["\']',
+                r'transcript["\']?:\s*["\']([^"\']*).*["\']',
                 r'"captions":\s*\[([^\]]+)\]',
                 r'"transcript_segments":\s*\[([^\]]+)\]'
             ]
