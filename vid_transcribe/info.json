@@ -1,0 +1,14 @@
+{
+    "author": ["mrdylanroberts"],
+    "name": "VidTranscribe",
+    "short": "Extract transcripts from Loom and Zoom video recordings",
+    "description": "A Discord cog that extracts transcripts from Loom and Zoom video recordings. Supports automatic platform detection and outputs clean text transcripts. Works with public Loom videos and Zoom cloud recordings with proper API access.",
+    "install_msg": "Thanks for installing VidTranscribe! Use `!vid_transcribe <url>` to extract transcripts from Loom or Zoom recordings. Make sure to configure your API keys if needed for Zoom recordings.",
+    "tags": ["transcription", "loom", "zoom", "video", "text", "utility"],
+    "requirements": ["aiohttp", "beautifulsoup4", "requests"],
+    "hidden": false,
+    "end_user_data_statement": "This cog processes video URLs to extract transcripts. No user data is permanently stored.",
+    "min_bot_version": "3.5.0",
+    "disabled": false,
+    "type": "COG"
+}
