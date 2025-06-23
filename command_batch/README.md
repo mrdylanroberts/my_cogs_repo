@@ -15,7 +15,7 @@ A Red-DiscordBot cog that allows you to create custom command profiles and execu
 ### Main Commands
 
 - `!multicommand` - Show help and available commands
-- `!multicommand create <name> <command1>,<command2>,...` - Create a new command profile
+- `!multicommand create <name> <command1>><command2>>...` - Create a new command profile
 - `!multicommand run <name>` - Execute a command profile
 - `!multicommand list` - Show all available profiles
 - `!multicommand view <name>` - View details of a specific profile
@@ -31,7 +31,7 @@ A Red-DiscordBot cog that allows you to create custom command profiles and execu
 ### Creating a Profile for Email News Testing
 
 ```
-!multicommand create testemailnews unload email_news,cog uninstall email_news,repo update,cog install my-cogs-repo email_news,load email_news,set api email_news secret your-encryption-key-here,emailnews setdefaultchannel examplechannel,emailnews setup your-email@example.com your-app-password,emailnews interval 3600,emailnews checknow
+!multicommand create testemailnews unload email_news>cog uninstall email_news>repo update>cog install my-cogs-repo email_news>load email_news>set api email_news secret your-encryption-key-here>emailnews setdefaultchannel examplechannel>emailnews setup your-email@example.com your-app-password>emailnews interval 3600>emailnews checknow
 ```
 
 ### Running the Profile
@@ -43,7 +43,7 @@ A Red-DiscordBot cog that allows you to create custom command profiles and execu
 ### Creating a Simple Cog Reload Profile
 
 ```
-!multicommand create reloadcog unload mycog,load mycog
+!multicommand create reloadcog unload mycog>load mycog
 ```
 
 ### Viewing All Profiles
@@ -62,7 +62,7 @@ A Red-DiscordBot cog that allows you to create custom command profiles and execu
 
 ### Smart Command Parsing
 
-- Commands are automatically parsed from comma-separated lists
+- Commands are automatically parsed from '>' separated lists
 - The `!` prefix is automatically removed if present
 - Whitespace is automatically trimmed
 
@@ -93,7 +93,7 @@ A Red-DiscordBot cog that allows you to create custom command profiles and execu
 
 3. Start creating command profiles:
    ```
-   !multicommand create myprofile command1,command2,command3
+   !multicommand create myprofile command1>command2>command3
    ```
 
 ## Permissions
