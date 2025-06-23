@@ -546,6 +546,8 @@ class VidTranscribe(commands.Cog):
     @commands.is_owner()
     async def install_dependencies(self, ctx, auto_install: bool = True):
         """Install required dependencies for audio transcription."""
+        global YT_DLP_AVAILABLE, WHISPER_AVAILABLE
+        
         if not auto_install:
             await ctx.send("❌ Auto-installation disabled. Please install manually:\n"
                           "`pip install yt-dlp openai-whisper`")
@@ -571,7 +573,6 @@ class VidTranscribe(commands.Cog):
                 # Try to import after installation
                 try:
                     import yt_dlp
-                    global YT_DLP_AVAILABLE
                     YT_DLP_AVAILABLE = True
                 except ImportError:
                     pass
@@ -594,7 +595,6 @@ class VidTranscribe(commands.Cog):
                 # Try to import after installation
                 try:
                     import whisper
-                    global WHISPER_AVAILABLE
                     WHISPER_AVAILABLE = True
                     # Load the model
                     self.whisper_model = whisper.load_model("base")
