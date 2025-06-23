@@ -10,6 +10,9 @@ A Discord cog that extracts transcripts from Loom and Zoom video recordings and 
 - 🔍 **Smart detection**: Automatically detects video platform from URL
 - ⚡ **Easy to use**: Simple command interface
 - 🔒 **Secure**: API credentials stored securely in bot config
+- 🖥️ **VPS optimized**: Special installation and resource management for limited disk space environments
+- 🧹 **Smart cleanup**: Automatic disk space monitoring and cleanup tools
+- ⚙️ **Resource management**: Configurable settings for low-resource environments
 
 ## Supported Platforms
 
@@ -37,6 +40,10 @@ A Discord cog that extracts transcripts from Loom and Zoom video recordings and 
 - `!vidtranscribe_config` - Show configuration status
 - `!vidtranscribe_config zoom <client_id> <client_secret> <account_id>` - Configure Zoom API
 - `!vidtranscribe_config clear` - Clear all API credentials
+- `!vt install` - Install dependencies (standard)
+- `!vt install_vps` - Install dependencies (VPS optimized for limited disk space)
+- `!vt cleanup` - Clean pip cache and temp files, show disk usage
+- `!vt vpsmode <on/off>` - Configure optimal settings for VPS environments
 
 ## Setup
 
@@ -48,18 +55,25 @@ A Discord cog that extracts transcripts from Loom and Zoom video recordings and 
    !load vid_transcribe
    ```
 
-2. **Quick Setup (Automatic):**
+2. **Standard Setup:**
    ```
    !vt install
    ```
    This will automatically install required dependencies (`yt-dlp` and `openai-whisper`) for audio transcription.
 
-3. **Manual Setup (Alternative):**
+3. **VPS Setup (Limited Disk Space):**
    ```
-   !load vid_transcribe
+   !vt cleanup
+   !vt install_vps
+   !vt vpsmode on
    ```
+   This optimized installation:
+   - Clears pip cache and temp files first
+   - Installs CPU-only PyTorch (smaller size)
+   - Uses minimal dependencies
+   - Configures resource-efficient settings
 
-2. The cog will work immediately for Loom videos (no setup required)
+4. The cog will work immediately for Loom videos (no setup required)
 
 ### Zoom API Setup (Optional)
 
@@ -145,11 +159,22 @@ The cog generates clean text files with:
 - `aiohttp` - HTTP requests
 - `beautifulsoup4` - HTML parsing
 - `requests` - HTTP requests (fallback)
+- `yt-dlp` - Audio extraction from videos (auto-installed)
+- `openai-whisper` - Audio transcription (auto-installed)
+- `torch` - Machine learning backend (CPU-only for VPS)
 
 ### Data Storage
 - Transcripts saved to `<bot_data>/vid_transcribe/transcripts/`
 - API credentials stored in bot config (encrypted)
+- Temporary audio chunks (auto-cleaned after processing)
 - No permanent user data storage
+
+### Resource Management
+- **Disk monitoring**: Automatic tracking of available disk space
+- **Smart cleanup**: Immediate removal of processed audio chunks
+- **Low resource mode**: Uses smaller Whisper model ("tiny" vs "base")
+- **VPS optimization**: CPU-only PyTorch, minimal dependencies
+- **Configurable limits**: Max disk usage and chunk duration settings
 
 ### API Limitations
 

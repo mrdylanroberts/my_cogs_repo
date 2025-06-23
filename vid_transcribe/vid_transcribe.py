@@ -13,6 +13,8 @@ import os
 import tempfile
 from datetime import datetime
 import discord
+import shutil
+import psutil
 
 # Optional imports for audio transcription
 try:
@@ -53,11 +55,14 @@ class VidTranscribe(commands.Cog):
             "transcription_service": "whisper",  # whisper, openai_api, google, azure
             "audio_transcription_enabled": True,
             "max_audio_duration_minutes": 0,  # 0 = no limit, use chunking for long videos
-            "chunk_duration_minutes": 30,  # Process in chunks for long videos
+            "chunk_duration_minutes": 10,  # Reduced for VPS - Process in chunks for long videos
             "save_transcripts": True,
             "transcript_directory": "./transcripts/",
             "audio_quality": "worst",  # worst, best - for resource efficiency
-            "cleanup_temp_files": True
+            "cleanup_temp_files": True,
+            "low_resource_mode": True,  # Enable for VPS environments
+            "max_disk_usage_mb": 2000,  # Maximum disk usage in MB for temp files
+            "enable_disk_monitoring": True  # Monitor disk space before downloads
         }
         self.config.register_global(**default_global)
         self.session = None
@@ -70,11 +75,25 @@ class VidTranscribe(commands.Cog):
         # Load Whisper model if available and enabled
         if WHISPER_AVAILABLE and await self.config.audio_transcription_enabled():
             try:
-                # Use small model for efficiency
-                self.whisper_model = whisper.load_model("base")
-                log.info("Whisper model loaded successfully")
+                # Use smaller model for low-resource environments
+                if await self.config.low_resource_mode():
+                    model_size = "tiny"  # Smallest model for VPS
+                    log.info("Loading tiny Whisper model for low-resource mode")
+                else:
+                    model_size = "base"  # Default model
+                    
+                self.whisper_model = whisper.load_model(model_size)
+                log.info(f"Whisper model '{model_size}' loaded successfully")
             except Exception as e:
                 log.warning(f"Failed to load Whisper model: {e}")
+                # Try fallback to tiny model if base fails
+                if model_size != "tiny":
+                    try:
+                        log.info("Attempting fallback to tiny model...")
+                        self.whisper_model = whisper.load_model("tiny")
+                        log.info("Fallback tiny Whisper model loaded successfully")
+                    except Exception as e2:
+                        log.error(f"Fallback model loading also failed: {e2}")
         
     async def cog_unload(self):
         """Clean up when the cog is unloaded."""
@@ -274,6 +293,40 @@ class VidTranscribe(commands.Cog):
                 except:
                     pass
     
+    async def _check_disk_space(self) -> tuple[bool, float]:
+        """Check available disk space and return (has_space, available_gb)."""
+        try:
+            if not await self.config.enable_disk_monitoring():
+                return True, 999.0  # Skip check if disabled
+                
+            temp_dir = tempfile.gettempdir()
+            disk_usage = shutil.disk_usage(temp_dir)
+            available_gb = disk_usage.free / (1024**3)
+            max_usage_mb = await self.config.max_disk_usage_mb()
+            required_gb = max_usage_mb / 1024
+            
+            return available_gb >= required_gb, available_gb
+        except Exception as e:
+            log.warning(f"Disk space check failed: {e}")
+            return True, 999.0  # Assume OK if check fails
+    
+    async def _cleanup_temp_directory(self):
+        """Clean up old temp files to free space."""
+        try:
+            temp_dir = tempfile.gettempdir()
+            for filename in os.listdir(temp_dir):
+                if filename.startswith('chunk_') and filename.endswith('.m4a'):
+                    file_path = os.path.join(temp_dir, filename)
+                    try:
+                        # Remove files older than 1 hour
+                        if os.path.getmtime(file_path) < (datetime.now().timestamp() - 3600):
+                            os.unlink(file_path)
+                            log.info(f"Cleaned up old temp file: {filename}")
+                    except Exception as e:
+                        log.warning(f"Failed to clean temp file {filename}: {e}")
+        except Exception as e:
+            log.warning(f"Temp directory cleanup failed: {e}")
+    
     async def _transcribe_audio_chunked(self, ctx, url: str, total_duration: float) -> Optional[str]:
         """Transcribe long videos by processing them in chunks with live embed progress."""
         try:
@@ -299,15 +352,30 @@ class VidTranscribe(commands.Cog):
             temp_files = []
             
             try:
+                # Initial cleanup and disk space check
+                await self._cleanup_temp_directory()
+                has_space, available_gb = await self._check_disk_space()
+                if not has_space:
+                    await ctx.send(f"❌ Insufficient disk space! Available: {available_gb:.1f}GB. Please free up space and try again.")
+                    return None
+                
                 for chunk_num in range(total_chunks):
                     start_time = chunk_num * chunk_duration
                     end_time = min((chunk_num + 1) * chunk_duration, total_duration)
                     overall_progress = (chunk_num / total_chunks) * 100
                     
+                    # Check disk space before each chunk
+                    has_space, available_gb = await self._check_disk_space()
+                    if not has_space:
+                        embed.set_field_at(2, name="⏱️ Status", value=f"❌ Disk space low ({available_gb:.1f}GB)", inline=True)
+                        await progress_msg.edit(embed=embed)
+                        await ctx.send(f"❌ Stopping transcription: Low disk space ({available_gb:.1f}GB available)")
+                        break
+                    
                     # Update embed for chunk start
                     embed.set_field_at(0, name="📊 Overall Progress", value=f"{overall_progress:.0f}%", inline=True)
                     embed.set_field_at(1, name="🔄 Current Chunk", value=f"{chunk_num + 1}/{total_chunks}", inline=True)
-                    embed.set_field_at(2, name="⏱️ Status", value=f"Processing ({start_time//60:.0f}-{end_time//60:.0f} min)", inline=True)
+                    embed.set_field_at(2, name="⏱️ Status", value=f"Processing ({start_time//60:.0f}-{end_time//60:.0f} min) | {available_gb:.1f}GB free", inline=True)
                     embed.set_field_at(3, name="📥 Download", value="🔄 In Progress", inline=True)
                     embed.set_field_at(4, name="🤖 Transcription", value="⏳ Waiting", inline=True)
                     await progress_msg.edit(embed=embed)
@@ -326,11 +394,25 @@ class VidTranscribe(commands.Cog):
                     embed.set_field_at(4, name="🤖 Transcription", value="🔄 In Progress", inline=True)
                     await progress_msg.edit(embed=embed)
                     
-                    chunk_transcript = await self._transcribe_audio_file(chunk_file)
-                    if chunk_transcript:
-                        # Add timestamp info
-                        timestamp_header = f"\n\n--- Chunk {chunk_num + 1} ({start_time//60:.0f}:{start_time%60:02.0f} - {end_time//60:.0f}:{end_time%60:02.0f}) ---\n"
-                        all_transcripts.append(timestamp_header + chunk_transcript)
+                    try:
+                        chunk_transcript = await self._transcribe_audio_file(chunk_file)
+                        if chunk_transcript:
+                            # Add timestamp info
+                            timestamp_header = f"\n\n--- Chunk {chunk_num + 1} ({start_time//60:.0f}:{start_time%60:02.0f} - {end_time//60:.0f}:{end_time%60:02.0f}) ---\n"
+                            all_transcripts.append(timestamp_header + chunk_transcript)
+                    except Exception as e:
+                        log.error(f"Transcription failed for chunk {chunk_num + 1}: {e}")
+                        embed.set_field_at(4, name="🤖 Transcription", value="❌ Failed", inline=True)
+                        await progress_msg.edit(embed=embed)
+                    finally:
+                        # Immediate cleanup of chunk file to free disk space
+                        if chunk_file and await self.config.cleanup_temp_files():
+                            try:
+                                os.unlink(chunk_file)
+                                temp_files.remove(chunk_file) if chunk_file in temp_files else None
+                                log.info(f"Cleaned up chunk file: {os.path.basename(chunk_file)}")
+                            except Exception as e:
+                                log.warning(f"Failed to cleanup chunk file: {e}")
                     
                     # Update completion
                     completion_progress = ((chunk_num + 1) / total_chunks) * 100
@@ -719,6 +801,29 @@ class VidTranscribe(commands.Cog):
             inline=True
         )
         
+        # Resource management settings
+        low_resource = config.get('low_resource_mode', False)
+        max_disk_mb = config.get('max_disk_usage_mb', 2000)
+        disk_monitoring = config.get('enable_disk_monitoring', True)
+        
+        embed.add_field(
+            name="Low Resource Mode",
+            value="✅ Enabled" if low_resource else "❌ Disabled",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Max Disk Usage",
+            value=f"{max_disk_mb}MB",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Disk Monitoring",
+            value="✅ Enabled" if disk_monitoring else "❌ Disabled",
+            inline=True
+        )
+        
         embed.add_field(
             name="Save Transcripts",
             value="✅ Yes" if config['save_transcripts'] else "❌ No",
@@ -727,20 +832,146 @@ class VidTranscribe(commands.Cog):
         
         await ctx.send(embed=embed)
     
+    @vid_transcribe.command(name="vpsmode")
+    @commands.is_owner()
+    async def configure_vps_mode(self, ctx, enable: bool = True):
+        """Configure optimal settings for VPS environments with limited resources."""
+        if enable:
+            # Enable VPS-friendly settings
+            await self.config.low_resource_mode.set(True)
+            await self.config.chunk_duration_minutes.set(5)  # Smaller chunks
+            await self.config.max_disk_usage_mb.set(1500)  # Conservative disk usage
+            await self.config.enable_disk_monitoring.set(True)
+            await self.config.audio_quality.set("worst")  # Lower quality for space
+            
+            embed = discord.Embed(
+                title="VPS Mode Enabled", 
+                description="Configured optimal settings for VPS environments:", 
+                color=0x00ff00
+            )
+            embed.add_field(name="Low Resource Mode", value="✅ Enabled", inline=True)
+            embed.add_field(name="Chunk Size", value="5 minutes", inline=True)
+            embed.add_field(name="Max Disk Usage", value="1500MB", inline=True)
+            embed.add_field(name="Disk Monitoring", value="✅ Enabled", inline=True)
+            embed.add_field(name="Audio Quality", value="Worst (space-saving)", inline=True)
+            embed.add_field(name="Whisper Model", value="Tiny (when loaded)", inline=True)
+        else:
+            # Disable VPS mode - restore defaults
+            await self.config.low_resource_mode.set(False)
+            await self.config.chunk_duration_minutes.set(10)
+            await self.config.max_disk_usage_mb.set(2000)
+            await self.config.enable_disk_monitoring.set(False)
+            await self.config.audio_quality.set("best")
+            
+            embed = discord.Embed(
+                title="VPS Mode Disabled", 
+                description="Restored default settings:", 
+                color=0xff9900
+            )
+            embed.add_field(name="Low Resource Mode", value="❌ Disabled", inline=True)
+            embed.add_field(name="Chunk Size", value="10 minutes", inline=True)
+            embed.add_field(name="Max Disk Usage", value="2000MB", inline=True)
+            embed.add_field(name="Disk Monitoring", value="❌ Disabled", inline=True)
+            embed.add_field(name="Audio Quality", value="Best", inline=True)
+            embed.add_field(name="Whisper Model", value="Base (when loaded)", inline=True)
+        
+        await ctx.send(embed=embed)
+    
+    @vid_transcribe.command(name="cleanup")
+    @commands.is_owner()
+    async def cleanup_disk_space(self, ctx):
+        """Clean up temporary files and pip cache to free disk space."""
+        embed = discord.Embed(title="🧹 Disk Cleanup", description="Cleaning up temporary files...", color=0xffaa00)
+        status_msg = await ctx.send(embed=embed)
+        
+        cleanup_results = []
+        
+        try:
+            # Clean pip cache
+            if SUBPROCESS_AVAILABLE:
+                pip_cache_result = subprocess.run(
+                    [sys.executable, "-m", "pip", "cache", "purge"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60
+                )
+                if pip_cache_result.returncode == 0:
+                    cleanup_results.append("✅ Pip cache cleared")
+                else:
+                    cleanup_results.append("❌ Failed to clear pip cache")
+            
+            # Clean temporary transcription files
+            temp_cleaned = await self._cleanup_temp_directory()
+            if temp_cleaned:
+                cleanup_results.append("✅ Temporary transcription files cleaned")
+            else:
+                cleanup_results.append("ℹ️ No temporary files to clean")
+            
+            # Check available disk space
+            if psutil:
+                disk_usage = psutil.disk_usage('/')
+                free_gb = disk_usage.free / (1024**3)
+                cleanup_results.append(f"💾 Available space: {free_gb:.1f}GB")
+            
+            embed = discord.Embed(
+                title="🧹 Cleanup Complete", 
+                description="\n".join(cleanup_results),
+                color=0x00ff00
+            )
+            
+        except Exception as e:
+            embed = discord.Embed(
+                title="❌ Cleanup Failed", 
+                description=f"Error during cleanup: {str(e)}",
+                color=0xff0000
+            )
+        
+        await status_msg.edit(embed=embed)
+    
     async def _install_dependency(self, package_name: str) -> bool:
-        """Attempt to install a dependency using pip."""
+        """Attempt to install a dependency using pip with VPS optimizations."""
         if not SUBPROCESS_AVAILABLE:
             return False
         
         try:
-            # Use the same Python executable that's running the bot
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", package_name],
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minute timeout
-            )
-            return result.returncode == 0
+            # VPS-optimized installation commands
+            if package_name == "openai-whisper":
+                # Install CPU-only torch first to avoid large GPU dependencies
+                cpu_torch_result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "torch", "--index-url", "https://download.pytorch.org/whl/cpu"],
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+                if cpu_torch_result.returncode != 0:
+                    log.error(f"Failed to install CPU-only torch: {cpu_torch_result.stderr}")
+                    return False
+                
+                # Then install whisper with no-deps to avoid conflicts
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", package_name, "--no-deps"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                
+                # Install remaining whisper dependencies manually
+                deps_result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "numpy", "tqdm", "more-itertools", "tiktoken", "numba"],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                return result.returncode == 0 and deps_result.returncode == 0
+            else:
+                # Standard installation for other packages
+                result = subprocess.run(
+                    [sys.executable, "-m", "pip", "install", package_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                return result.returncode == 0
         except Exception as e:
             log.error(f"Failed to install {package_name}: {e}")
             return False
@@ -830,6 +1061,98 @@ class VidTranscribe(commands.Cog):
             )
         
         await status_msg.edit(embed=embed)
+    
+    @vid_transcribe.command(name="install_vps")
+    @commands.is_owner()
+    async def install_dependencies_vps(self, ctx):
+        """Install dependencies optimized for VPS environments with limited disk space."""
+        global YT_DLP_AVAILABLE, WHISPER_AVAILABLE
+        
+        if not SUBPROCESS_AVAILABLE:
+            await ctx.send("❌ Cannot auto-install dependencies. Please install manually with CPU-only torch:\n"
+                          "`pip install torch --index-url https://download.pytorch.org/whl/cpu`\n"
+                          "`pip install yt-dlp openai-whisper --no-deps`\n"
+                          "`pip install numpy tqdm more-itertools tiktoken numba`")
+            return
+        
+        embed = discord.Embed(title="Installing VPS-Optimized Dependencies", color=0xffaa00)
+        embed.description = "Installing lightweight versions for VPS environments..."
+        embed.add_field(name="Strategy", value="• CPU-only PyTorch\n• Minimal dependencies\n• Space-efficient installation", inline=False)
+        status_msg = await ctx.send(embed=embed)
+        
+        # Step 1: Cleanup first
+        embed.add_field(name="Step 1", value="🧹 Cleaning up disk space...", inline=False)
+        await status_msg.edit(embed=embed)
+        
+        try:
+            # Clean pip cache
+            subprocess.run([sys.executable, "-m", "pip", "cache", "purge"], 
+                         capture_output=True, timeout=60)
+            await self._cleanup_temp_directory()
+        except:
+            pass
+        
+        # Step 2: Install yt-dlp
+        embed.set_field_at(-1, name="Step 2", value="📥 Installing yt-dlp...", inline=False)
+        await status_msg.edit(embed=embed)
+        
+        yt_dlp_success = await self._install_dependency("yt-dlp")
+        if yt_dlp_success:
+            embed.set_field_at(-1, name="Step 2", value="✅ yt-dlp installed successfully", inline=False)
+            try:
+                import yt_dlp
+                YT_DLP_AVAILABLE = True
+            except ImportError:
+                pass
+        else:
+            embed.set_field_at(-1, name="Step 2", value="❌ yt-dlp installation failed", inline=False)
+        await status_msg.edit(embed=embed)
+        
+        # Step 3: Install Whisper with VPS optimizations
+        embed.add_field(name="Step 3", value="🤖 Installing CPU-optimized Whisper...", inline=False)
+        await status_msg.edit(embed=embed)
+        
+        whisper_success = await self._install_dependency("openai-whisper")
+        if whisper_success:
+            embed.set_field_at(-1, name="Step 3", value="✅ Whisper installed successfully", inline=False)
+            try:
+                import whisper
+                WHISPER_AVAILABLE = True
+                # Load tiny model for VPS
+                self.whisper_model = whisper.load_model("tiny")
+            except ImportError:
+                pass
+        else:
+            embed.set_field_at(-1, name="Step 3", value="❌ Whisper installation failed", inline=False)
+        await status_msg.edit(embed=embed)
+        
+        # Final status
+        if YT_DLP_AVAILABLE and WHISPER_AVAILABLE:
+            final_embed = discord.Embed(
+                title="🎉 VPS Installation Complete!", 
+                description="All dependencies installed successfully with VPS optimizations.",
+                color=0x00ff00
+            )
+            final_embed.add_field(name="Next Steps", 
+                                value="• Run `[p]vid_transcribe vpsmode true` to enable VPS mode\n"
+                                      "• Use `[p]vid_transcribe config` to verify settings", 
+                                inline=False)
+            # Enable audio transcription and VPS mode
+            await self.config.audio_transcription_enabled.set(True)
+            await self.config.low_resource_mode.set(True)
+        else:
+            final_embed = discord.Embed(
+                title="⚠️ Installation Issues", 
+                description="Some dependencies failed to install. Try manual installation or check disk space.",
+                color=0xff9900
+            )
+            final_embed.add_field(name="Manual Installation", 
+                                value="```\npip install torch --index-url https://download.pytorch.org/whl/cpu\n"
+                                      "pip install yt-dlp openai-whisper --no-deps\n"
+                                      "pip install numpy tqdm more-itertools tiktoken numba\n```", 
+                                inline=False)
+        
+        await status_msg.edit(embed=final_embed)
     
     @vid_transcribe.command(name="setup")
     @commands.is_owner()
