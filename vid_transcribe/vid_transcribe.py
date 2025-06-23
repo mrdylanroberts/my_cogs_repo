@@ -13,6 +13,27 @@ import os
 import tempfile
 from datetime import datetime
 
+# Optional imports for audio transcription
+try:
+    import yt_dlp
+    YT_DLP_AVAILABLE = True
+except ImportError:
+    YT_DLP_AVAILABLE = False
+
+try:
+    import whisper
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+
+# For automatic dependency installation
+try:
+    import subprocess
+    import sys
+    SUBPROCESS_AVAILABLE = True
+except ImportError:
+    SUBPROCESS_AVAILABLE = False
+
 log = logging.getLogger("red.cogs.vid_transcribe")
 
 class VidTranscribe(commands.Cog):
@@ -22,15 +43,36 @@ class VidTranscribe(commands.Cog):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=1234567890)
         default_global = {
-            "api_keys": {},
-            "enabled_platforms": ["loom", "zoom"]
+            "api_keys": {
+                "openai": None,
+                "google_speech": None,
+                "azure_speech": None
+            },
+            "enabled_platforms": ["loom", "zoom"],
+            "transcription_service": "whisper",  # whisper, openai_api, google, azure
+            "audio_transcription_enabled": True,
+            "max_audio_duration_minutes": 30,  # Resource limit
+            "save_transcripts": True,
+            "transcript_directory": "./transcripts/",
+            "audio_quality": "worst",  # worst, best - for resource efficiency
+            "cleanup_temp_files": True
         }
         self.config.register_global(**default_global)
         self.session = None
+        self.whisper_model = None
         
     async def cog_load(self):
         """Initialize the cog."""
         self.session = aiohttp.ClientSession()
+        
+        # Load Whisper model if available and enabled
+        if WHISPER_AVAILABLE and await self.config.audio_transcription_enabled():
+            try:
+                # Use small model for efficiency
+                self.whisper_model = whisper.load_model("base")
+                log.info("Whisper model loaded successfully")
+            except Exception as e:
+                log.warning(f"Failed to load Whisper model: {e}")
         
     async def cog_unload(self):
         """Clean up when the cog is unloaded."""
@@ -67,14 +109,18 @@ class VidTranscribe(commands.Cog):
             
             # Get transcript based on platform
             if platform == "loom":
-                transcript = await self._get_loom_transcript(url)
+                transcript = await self._get_loom_transcript(ctx, url)
             elif platform == "zoom":
-                transcript = await self._get_zoom_transcript(url)
+                transcript = await self._get_zoom_transcript(ctx, url)
             else:
                 await ctx.send("❌ Platform not implemented yet.")
                 return
             
             if transcript:
+                # Save transcript if enabled
+                if await self.config.save_transcripts():
+                    await self._save_transcript_file(transcript, url, platform)
+                
                 # Split long transcripts into multiple messages
                 for page in pagify(transcript, delims=["\n", ". "], page_length=1900):
                     await ctx.send(box(page, lang=""))
@@ -96,18 +142,25 @@ class VidTranscribe(commands.Cog):
         
         return None
     
-    async def _get_loom_transcript(self, url: str) -> Optional[str]:
-        """Extract transcript from Loom video."""
+    async def _get_loom_transcript(self, ctx, url: str) -> Optional[str]:
+        """Extract transcript from Loom video with fallback to audio transcription."""
         try:
-            # Extract video ID from URL
+            # Step 1: Try to get embedded transcript
             video_id = self._extract_loom_id(url)
             if not video_id:
                 return None
             
-            # Try to get transcript from Loom's API or page source
             transcript = await self._fetch_loom_transcript_from_page(url)
             
-            return transcript
+            if transcript:
+                return transcript
+            
+            # Step 2: Fallback to audio transcription if enabled
+            if await self.config.audio_transcription_enabled():
+                await ctx.send("📝 No embedded transcript found. Attempting audio transcription...")
+                return await self._transcribe_audio_from_url(ctx, url)
+            
+            return None
             
         except Exception as e:
             log.error(f"Error getting Loom transcript: {e}")
@@ -123,7 +176,6 @@ class VidTranscribe(commands.Cog):
                 content = await response.text()
                 
                 # Look for transcript data in the page source
-                # Loom often embeds transcript data in JavaScript variables
                 transcript_text = self._extract_transcript_from_content(content)
                 
                 return transcript_text
@@ -172,6 +224,179 @@ class VidTranscribe(commands.Cog):
             log.error(f"Error extracting transcript: {e}")
             return None
     
+    async def _transcribe_audio_from_url(self, ctx, url: str) -> Optional[str]:
+        """Transcribe audio from video URL using efficient methods."""
+        if not YT_DLP_AVAILABLE:
+            await ctx.send("⚠️ Audio transcription requires yt-dlp. Install with: `pip install yt-dlp`")
+            return None
+        
+        temp_audio_file = None
+        try:
+            # Check duration limit
+            duration = await self._get_video_duration(url)
+            max_duration = await self.config.max_audio_duration_minutes()
+            
+            if duration and duration > max_duration * 60:
+                await ctx.send(f"⚠️ Video too long ({duration//60:.1f} min). Max allowed: {max_duration} min")
+                return None
+            
+            await ctx.send("🎵 Downloading audio (audio only, not full video)...")
+            
+            # Download only audio (much more efficient than full video)
+            temp_audio_file = await self._download_audio_only(url)
+            
+            if not temp_audio_file:
+                return None
+            
+            await ctx.send("🤖 Transcribing speech to text...")
+            
+            # Transcribe using available service
+            transcript = await self._transcribe_audio_file(temp_audio_file)
+            
+            return transcript
+            
+        except Exception as e:
+            log.error(f"Audio transcription failed: {e}")
+            await ctx.send(f"❌ Audio transcription failed: {str(e)}")
+            return None
+        finally:
+            # Clean up temp files
+            if temp_audio_file and await self.config.cleanup_temp_files():
+                try:
+                    os.unlink(temp_audio_file)
+                except:
+                    pass
+    
+    async def _get_video_duration(self, url: str) -> Optional[float]:
+        """Get video duration without downloading."""
+        try:
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                return info.get('duration')
+        except:
+            return None
+    
+    async def _download_audio_only(self, url: str) -> Optional[str]:
+        """Download only audio track (much more efficient than full video)."""
+        try:
+            temp_dir = tempfile.gettempdir()
+            audio_quality = await self.config.audio_quality()
+            
+            # Configure yt-dlp for audio-only download
+            ydl_opts = {
+                'format': f'bestaudio[ext=m4a]/{audio_quality}audio',  # Audio only
+                'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+                'quiet': True,
+                'no_warnings': True,
+                'extractaudio': True,
+                'audioformat': 'wav',  # Convert to WAV for Whisper
+                'audioquality': '192K' if audio_quality == 'best' else '96K',
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                
+                # Find the downloaded file
+                filename = ydl.prepare_filename(info)
+                # yt-dlp might change extension to .wav
+                wav_filename = os.path.splitext(filename)[0] + '.wav'
+                
+                if os.path.exists(wav_filename):
+                    return wav_filename
+                elif os.path.exists(filename):
+                    return filename
+                
+            return None
+            
+        except Exception as e:
+            log.error(f"Audio download failed: {e}")
+            return None
+    
+    async def _transcribe_audio_file(self, audio_file: str) -> Optional[str]:
+        """Transcribe audio file using available service."""
+        service = await self.config.transcription_service()
+        
+        if service == "whisper" and WHISPER_AVAILABLE and self.whisper_model:
+            return await self._transcribe_with_whisper(audio_file)
+        elif service == "openai_api":
+            return await self._transcribe_with_openai_api(audio_file)
+        else:
+            log.error(f"Transcription service '{service}' not available")
+            return None
+    
+    async def _transcribe_with_whisper(self, audio_file: str) -> Optional[str]:
+        """Transcribe using local Whisper model."""
+        try:
+            # Run in executor to avoid blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, 
+                lambda: self.whisper_model.transcribe(audio_file)
+            )
+            
+            return result['text'].strip()
+            
+        except Exception as e:
+            log.error(f"Whisper transcription failed: {e}")
+            return None
+    
+    async def _transcribe_with_openai_api(self, audio_file: str) -> Optional[str]:
+        """Transcribe using OpenAI API (requires API key)."""
+        try:
+            api_key = await self.config.api_keys.openai()
+            if not api_key:
+                log.error("OpenAI API key not configured")
+                return None
+            
+            # Implementation would go here
+            # This is a placeholder for OpenAI API integration
+            log.warning("OpenAI API transcription not yet implemented")
+            return None
+            
+        except Exception as e:
+            log.error(f"OpenAI API transcription failed: {e}")
+            return None
+    
+    async def _save_transcript_file(self, transcript: str, url: str, platform: str):
+        """Save transcript to a .txt file."""
+        try:
+            transcript_dir = await self.config.transcript_directory()
+            os.makedirs(transcript_dir, exist_ok=True)
+            
+            # Generate filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            video_id = self._extract_video_id(url, platform)
+            filename = f"{platform}_{video_id}_{timestamp}.txt"
+            filepath = os.path.join(transcript_dir, filename)
+            
+            # Save transcript
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(f"Video URL: {url}\n")
+                f.write(f"Platform: {platform.title()}\n")
+                f.write(f"Transcribed: {datetime.now().isoformat()}\n")
+                f.write("\n" + "="*50 + "\n\n")
+                f.write(transcript)
+            
+            log.info(f"Transcript saved to: {filepath}")
+            
+        except Exception as e:
+            log.error(f"Failed to save transcript: {e}")
+    
+    def _extract_video_id(self, url: str, platform: str) -> str:
+        """Extract video ID for filename."""
+        if platform == "loom":
+            return self._extract_loom_id(url) or "unknown"
+        elif platform == "zoom":
+            # Extract Zoom meeting ID or recording ID
+            match = re.search(r'[a-zA-Z0-9._-]+', url.split('/')[-1])
+            return match.group(0) if match else "unknown"
+        return "unknown"
+    
     def _clean_transcript(self, transcript: str) -> str:
         """Clean and format transcript text."""
         if not transcript:
@@ -196,20 +421,26 @@ class VidTranscribe(commands.Cog):
             return match.group(1)
         return None
     
-    async def _get_zoom_transcript(self, url: str) -> Optional[str]:
-        """Extract transcript from Zoom recording."""
+    async def _get_zoom_transcript(self, ctx, url: str) -> Optional[str]:
+        """Extract transcript from Zoom video with fallback to audio transcription."""
         try:
-            # Zoom recordings might have transcript files or embedded captions
+            # Try embedded transcript first
             async with self.session.get(url) as response:
                 if response.status != 200:
                     return None
                 
                 content = await response.text()
-                
-                # Look for transcript or caption data
                 transcript = self._extract_zoom_transcript(content)
                 
-                return transcript
+                if transcript:
+                    return transcript
+                
+                # Fallback to audio transcription if enabled
+                if await self.config.audio_transcription_enabled():
+                    await ctx.send("📝 No embedded transcript found. Attempting audio transcription...")
+                    return await self._transcribe_audio_from_url(ctx, url)
+                
+                return None
                 
         except Exception as e:
             log.error(f"Error getting Zoom transcript: {e}")
@@ -236,6 +467,220 @@ class VidTranscribe(commands.Cog):
             log.error(f"Error extracting Zoom transcript: {e}")
             return None
     
+    @vid_transcribe.command(name="config")
+    @commands.is_owner()
+    async def show_config(self, ctx):
+        """Show current transcription configuration."""
+        config = await self.config.all()
+        
+        embed = discord.Embed(title="VidTranscribe Configuration", color=0x0099ff)
+        
+        # Audio transcription status
+        audio_enabled = config['audio_transcription_enabled']
+        embed.add_field(
+            name="Audio Transcription", 
+            value="✅ Enabled" if audio_enabled else "❌ Disabled",
+            inline=True
+        )
+        
+        # Available services
+        services = []
+        if WHISPER_AVAILABLE:
+            services.append("Whisper (Local)")
+        if config['api_keys']['openai']:
+            services.append("OpenAI API")
+        
+        embed.add_field(
+            name="Available Services",
+            value="\n".join(services) if services else "None",
+            inline=True
+        )
+        
+        # Current service
+        embed.add_field(
+            name="Current Service",
+            value=config['transcription_service'].title(),
+            inline=True
+        )
+        
+        # Resource limits
+        embed.add_field(
+            name="Max Duration",
+            value=f"{config['max_audio_duration_minutes']} minutes",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Audio Quality",
+            value=config['audio_quality'].title(),
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Save Transcripts",
+            value="✅ Yes" if config['save_transcripts'] else "❌ No",
+            inline=True
+        )
+        
+        await ctx.send(embed=embed)
+    
+    async def _install_dependency(self, package_name: str) -> bool:
+        """Attempt to install a dependency using pip."""
+        if not SUBPROCESS_AVAILABLE:
+            return False
+        
+        try:
+            # Use the same Python executable that's running the bot
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", package_name],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            return result.returncode == 0
+        except Exception as e:
+            log.error(f"Failed to install {package_name}: {e}")
+            return False
+    
+    @vid_transcribe.command(name="install")
+    @commands.is_owner()
+    async def install_dependencies(self, ctx, auto_install: bool = True):
+        """Install required dependencies for audio transcription."""
+        if not auto_install:
+            await ctx.send("❌ Auto-installation disabled. Please install manually:\n"
+                          "`pip install yt-dlp openai-whisper`")
+            return
+        
+        if not SUBPROCESS_AVAILABLE:
+            await ctx.send("❌ Cannot auto-install dependencies. Please install manually:\n"
+                          "`pip install yt-dlp openai-whisper`")
+            return
+        
+        embed = discord.Embed(title="Installing Audio Transcription Dependencies", color=0xffaa00)
+        embed.description = "Installing required packages for audio transcription..."
+        status_msg = await ctx.send(embed=embed)
+        
+        # Install yt-dlp
+        if not YT_DLP_AVAILABLE:
+            embed.add_field(name="📦 Installing yt-dlp", value="⏳ In progress...", inline=False)
+            await status_msg.edit(embed=embed)
+            
+            success = await self._install_dependency("yt-dlp")
+            if success:
+                embed.set_field_at(-1, name="📦 Installing yt-dlp", value="✅ Installed successfully", inline=False)
+                # Try to import after installation
+                try:
+                    import yt_dlp
+                    global YT_DLP_AVAILABLE
+                    YT_DLP_AVAILABLE = True
+                except ImportError:
+                    pass
+            else:
+                embed.set_field_at(-1, name="📦 Installing yt-dlp", value="❌ Installation failed", inline=False)
+            
+            await status_msg.edit(embed=embed)
+        else:
+            embed.add_field(name="📦 yt-dlp", value="✅ Already installed", inline=False)
+            await status_msg.edit(embed=embed)
+        
+        # Install whisper
+        if not WHISPER_AVAILABLE:
+            embed.add_field(name="🤖 Installing OpenAI Whisper", value="⏳ In progress...", inline=False)
+            await status_msg.edit(embed=embed)
+            
+            success = await self._install_dependency("openai-whisper")
+            if success:
+                embed.set_field_at(-1, name="🤖 Installing OpenAI Whisper", value="✅ Installed successfully", inline=False)
+                # Try to import after installation
+                try:
+                    import whisper
+                    global WHISPER_AVAILABLE
+                    WHISPER_AVAILABLE = True
+                    # Load the model
+                    self.whisper_model = whisper.load_model("base")
+                except ImportError:
+                    pass
+            else:
+                embed.set_field_at(-1, name="🤖 Installing OpenAI Whisper", value="❌ Installation failed", inline=False)
+            
+            await status_msg.edit(embed=embed)
+        else:
+            embed.add_field(name="🤖 OpenAI Whisper", value="✅ Already installed", inline=False)
+            await status_msg.edit(embed=embed)
+        
+        # Final status
+        if YT_DLP_AVAILABLE and WHISPER_AVAILABLE:
+            embed.color = 0x00ff00
+            embed.add_field(
+                name="🎉 Installation Complete", 
+                value="Audio transcription is now available! Use `!vt transcript <url>` to test.", 
+                inline=False
+            )
+            # Enable audio transcription
+            await self.config.audio_transcription_enabled.set(True)
+        else:
+            embed.color = 0xff0000
+            embed.add_field(
+                name="⚠️ Installation Issues", 
+                value="Some dependencies failed to install. Please install manually:\n`pip install yt-dlp openai-whisper`", 
+                inline=False
+            )
+        
+        await status_msg.edit(embed=embed)
+    
+    @vid_transcribe.command(name="setup")
+    @commands.is_owner()
+    async def setup_transcription(self, ctx):
+        """Setup audio transcription capabilities."""
+        embed = discord.Embed(title="Audio Transcription Setup", color=0x00ff00)
+        
+        # Check dependencies
+        deps = []
+        if YT_DLP_AVAILABLE:
+            deps.append("✅ yt-dlp (audio download)")
+        else:
+            deps.append("❌ yt-dlp - Missing")
+        
+        if WHISPER_AVAILABLE:
+            deps.append("✅ whisper (local transcription)")
+        else:
+            deps.append("❌ whisper - Missing")
+        
+        embed.add_field(
+            name="Dependencies Status",
+            value="\n".join(deps),
+            inline=False
+        )
+        
+        # Auto-install option
+        if not YT_DLP_AVAILABLE or not WHISPER_AVAILABLE:
+            embed.add_field(
+                name="🚀 Quick Setup",
+                value="Use `!vt install` to automatically install missing dependencies",
+                inline=False
+            )
+        
+        # Manual setup instructions
+        setup_text = """
+        **Manual Installation:**
+        ```
+        pip install yt-dlp openai-whisper
+        ```
+        
+        **For API-based Transcription:**
+        1. Get OpenAI API key
+        2. `!vt config openai_key YOUR_KEY`
+        3. `!vt config service openai_api`
+        """
+        
+        embed.add_field(
+            name="Manual Setup Instructions",
+            value=setup_text,
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+    
     @vid_transcribe.command(name="platforms")
     async def list_platforms(self, ctx):
         """List supported platforms."""
@@ -251,6 +696,14 @@ class VidTranscribe(commands.Cog):
             embed.add_field(name="Enabled", value=enabled_list, inline=True)
         if disabled_list:
             embed.add_field(name="Disabled", value=disabled_list, inline=True)
+        
+        # Add transcription capabilities
+        audio_enabled = await self.config.audio_transcription_enabled()
+        embed.add_field(
+            name="Audio Transcription",
+            value="✅ Available" if audio_enabled else "❌ Disabled",
+            inline=False
+        )
         
         await ctx.send(embed=embed)
     
@@ -319,7 +772,7 @@ class VidTranscribe(commands.Cog):
         """Show information about the transcript cog."""
         embed = discord.Embed(
             title="Video Transcript Extractor",
-            description="Extract transcripts from video platforms",
+            description="Extract transcripts from video platforms with audio fallback",
             color=0x00ff00
         )
         
@@ -330,14 +783,20 @@ class VidTranscribe(commands.Cog):
         )
         
         embed.add_field(
-            name="Commands",
-            value="• `transcript <url>` - Get transcript\n• `platforms` - List platforms\n• `test` - Test extraction",
+            name="Transcription Methods",
+            value="• Embedded transcripts\n• Audio transcription (fallback)",
             inline=True
         )
         
         embed.add_field(
-            name="Usage",
-            value="Simply provide a video URL and the bot will attempt to extract the transcript.",
+            name="Commands",
+            value="• `transcript <url>` - Get transcript\n• `platforms` - List platforms\n• `test` - Test extraction\n• `setup` - Setup guide\n• `install` - Auto-install dependencies",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="How it works",
+            value="1. Tries to find embedded transcript\n2. Falls back to audio transcription\n3. Saves transcript as .txt file",
             inline=False
         )
         
@@ -451,6 +910,13 @@ class VidTranscribe(commands.Cog):
                 await ctx.send(f"**Transcript Found:**\n{box(preview_transcript)}")
             else:
                 await ctx.send("**No transcript found**")
+                
+                # Show audio transcription availability
+                audio_enabled = await self.config.audio_transcription_enabled()
+                if audio_enabled and YT_DLP_AVAILABLE:
+                    await ctx.send("**Audio transcription available as fallback**")
+                else:
+                    await ctx.send("**Audio transcription not available**")
                 
         except Exception as e:
             await ctx.send(f"**Debug Error:** {str(e)}")

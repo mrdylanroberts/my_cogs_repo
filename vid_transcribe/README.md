@@ -44,6 +44,18 @@ A Discord cog that extracts transcripts from Loom and Zoom video recordings and 
 
 1. Install the cog:
    ```
+   !cog install my-cogs-repo vid_transcribe
+   !load vid_transcribe
+   ```
+
+2. **Quick Setup (Automatic):**
+   ```
+   !vt install
+   ```
+   This will automatically install required dependencies (`yt-dlp` and `openai-whisper`) for audio transcription.
+
+3. **Manual Setup (Alternative):**
+   ```
    !load vid_transcribe
    ```
 
