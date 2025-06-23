@@ -12,6 +12,7 @@ from urllib.parse import urlparse, parse_qs
 import os
 import tempfile
 from datetime import datetime
+import discord
 
 # Optional imports for audio transcription
 try:
@@ -274,12 +275,25 @@ class VidTranscribe(commands.Cog):
                     pass
     
     async def _transcribe_audio_chunked(self, ctx, url: str, total_duration: float) -> Optional[str]:
-        """Transcribe long videos by processing them in chunks."""
+        """Transcribe long videos by processing them in chunks with live embed progress."""
         try:
             chunk_duration = await self.config.chunk_duration_minutes() * 60  # Convert to seconds
             total_chunks = int((total_duration + chunk_duration - 1) // chunk_duration)  # Ceiling division
             
-            await ctx.send(f"📹 Processing long video ({total_duration//60:.1f} min) in {total_chunks} chunks...")
+            # Create initial progress embed
+            embed = discord.Embed(
+                title="🎬 Video Transcription Progress",
+                description=f"Processing {total_duration//60:.1f} minute video in {total_chunks} chunks",
+                color=0x3498db
+            )
+            embed.add_field(name="📊 Overall Progress", value="0%", inline=True)
+            embed.add_field(name="🔄 Current Chunk", value="0/" + str(total_chunks), inline=True)
+            embed.add_field(name="⏱️ Status", value="Starting...", inline=True)
+            embed.add_field(name="📥 Download", value="⏳ Waiting", inline=True)
+            embed.add_field(name="🤖 Transcription", value="⏳ Waiting", inline=True)
+            embed.add_field(name="✅ Completed Chunks", value="0", inline=True)
+            
+            progress_msg = await ctx.send(embed=embed)
             
             all_transcripts = []
             temp_files = []
@@ -288,26 +302,29 @@ class VidTranscribe(commands.Cog):
                 for chunk_num in range(total_chunks):
                     start_time = chunk_num * chunk_duration
                     end_time = min((chunk_num + 1) * chunk_duration, total_duration)
-                    
-                    # Initial progress
                     overall_progress = (chunk_num / total_chunks) * 100
-                    progress_msg = f"🔄 Processing chunk {chunk_num + 1}/{total_chunks} ({start_time//60:.0f}-{end_time//60:.0f} min) - {overall_progress:.0f}% complete"
-                    await ctx.send(progress_msg)
                     
-                    # Download phase with progress
-                    download_progress = overall_progress + (0.3 / total_chunks) * 100  # 30% of chunk for download
-                    await ctx.send(f"⬇️ Downloading audio chunk {chunk_num + 1}... ({download_progress:.0f}% overall)")
+                    # Update embed for chunk start
+                    embed.set_field_at(0, name="📊 Overall Progress", value=f"{overall_progress:.0f}%", inline=True)
+                    embed.set_field_at(1, name="🔄 Current Chunk", value=f"{chunk_num + 1}/{total_chunks}", inline=True)
+                    embed.set_field_at(2, name="⏱️ Status", value=f"Processing ({start_time//60:.0f}-{end_time//60:.0f} min)", inline=True)
+                    embed.set_field_at(3, name="📥 Download", value="🔄 In Progress", inline=True)
+                    embed.set_field_at(4, name="🤖 Transcription", value="⏳ Waiting", inline=True)
+                    await progress_msg.edit(embed=embed)
                     
-                    chunk_file = await self._download_audio_chunk(url, start_time, end_time - start_time, ctx)
+                    # Download chunk with progress tracking
+                    chunk_file = await self._download_audio_chunk_with_embed(url, start_time, end_time - start_time, progress_msg, embed)
                     if not chunk_file:
-                        await ctx.send(f"⚠️ Failed to download chunk {chunk_num + 1}, skipping...")
+                        embed.set_field_at(3, name="📥 Download", value="❌ Failed", inline=True)
+                        await progress_msg.edit(embed=embed)
                         continue
                     
                     temp_files.append(chunk_file)
                     
-                    # Transcription phase with progress
-                    transcribe_progress = overall_progress + (0.7 / total_chunks) * 100  # 70% of chunk for transcription
-                    await ctx.send(f"🤖 Transcribing chunk {chunk_num + 1}... ({transcribe_progress:.0f}% overall)")
+                    # Update for transcription phase
+                    embed.set_field_at(3, name="📥 Download", value="✅ Complete", inline=True)
+                    embed.set_field_at(4, name="🤖 Transcription", value="🔄 In Progress", inline=True)
+                    await progress_msg.edit(embed=embed)
                     
                     chunk_transcript = await self._transcribe_audio_file(chunk_file)
                     if chunk_transcript:
@@ -315,9 +332,19 @@ class VidTranscribe(commands.Cog):
                         timestamp_header = f"\n\n--- Chunk {chunk_num + 1} ({start_time//60:.0f}:{start_time%60:02.0f} - {end_time//60:.0f}:{end_time%60:02.0f}) ---\n"
                         all_transcripts.append(timestamp_header + chunk_transcript)
                     
-                    # Completion progress
+                    # Update completion
                     completion_progress = ((chunk_num + 1) / total_chunks) * 100
-                    await ctx.send(f"✅ Chunk {chunk_num + 1} completed! ({completion_progress:.0f}% done - {total_chunks - chunk_num - 1} chunks remaining)")
+                    embed.set_field_at(0, name="📊 Overall Progress", value=f"{completion_progress:.0f}%", inline=True)
+                    embed.set_field_at(4, name="🤖 Transcription", value="✅ Complete", inline=True)
+                    embed.set_field_at(5, name="✅ Completed Chunks", value=str(chunk_num + 1), inline=True)
+                    
+                    if chunk_num + 1 < total_chunks:
+                        embed.set_field_at(2, name="⏱️ Status", value=f"Ready for next chunk ({total_chunks - chunk_num - 1} remaining)", inline=True)
+                    else:
+                        embed.set_field_at(2, name="⏱️ Status", value="🎉 All chunks completed!", inline=True)
+                        embed.color = 0x27ae60  # Green for completion
+                    
+                    await progress_msg.edit(embed=embed)
                 
                 if all_transcripts:
                     final_transcript = "\n".join(all_transcripts)
@@ -341,8 +368,8 @@ class VidTranscribe(commands.Cog):
             await ctx.send(f"❌ Chunked transcription failed: {str(e)}")
             return None
     
-    async def _download_audio_chunk(self, url: str, start_time: float, duration: float, ctx=None) -> Optional[str]:
-        """Download a specific time segment of audio with progress tracking."""
+    async def _download_audio_chunk_with_embed(self, url: str, start_time: float, duration: float, progress_msg, embed) -> Optional[str]:
+        """Download a specific time segment of audio with embed progress tracking."""
         try:
             temp_dir = tempfile.gettempdir()
             audio_quality = await self.config.audio_quality()
@@ -356,13 +383,14 @@ class VidTranscribe(commands.Cog):
             
             def progress_hook(d):
                 nonlocal last_progress
-                if d['status'] == 'downloading' and ctx:
+                if d['status'] == 'downloading':
                     try:
                         if 'downloaded_bytes' in d and 'total_bytes' in d:
                             progress = (d['downloaded_bytes'] / d['total_bytes']) * 100
-                            # Only send updates every 25% to avoid spam
+                            # Update embed every 25% to avoid rate limits
                             if progress - last_progress >= 25:
-                                asyncio.create_task(ctx.send(f"📥 Download progress: {progress:.0f}%"))
+                                embed.set_field_at(3, name="📥 Download", value=f"🔄 {progress:.0f}%", inline=True)
+                                asyncio.create_task(progress_msg.edit(embed=embed))
                                 last_progress = progress
                     except:
                         pass  # Ignore progress errors
@@ -374,6 +402,44 @@ class VidTranscribe(commands.Cog):
                 'quiet': True,
                 'no_warnings': True,
                 'progress_hooks': [progress_hook],
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'm4a',
+                }],
+                'postprocessor_args': [
+                    '-ss', str(start_time),
+                    '-t', str(duration)
+                ]
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+                
+            if os.path.exists(output_path):
+                return output_path
+            else:
+                return None
+                
+        except Exception as e:
+            log.error(f"Failed to download audio chunk: {e}")
+            return None
+    
+    async def _download_audio_chunk(self, url: str, start_time: float, duration: float, ctx=None) -> Optional[str]:
+        """Legacy download method for backward compatibility."""
+        try:
+            temp_dir = tempfile.gettempdir()
+            audio_quality = await self.config.audio_quality()
+            
+            # Generate unique filename for chunk
+            chunk_filename = f"chunk_{int(start_time)}_{int(duration)}.m4a"
+            output_path = os.path.join(temp_dir, chunk_filename)
+            
+            # Configure yt-dlp for chunk download with time range
+            ydl_opts = {
+                'format': f'bestaudio[ext=m4a]/{audio_quality}audio',
+                'outtmpl': output_path,
+                'quiet': True,
+                'no_warnings': True,
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'm4a',
