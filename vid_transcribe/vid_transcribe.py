@@ -51,7 +51,8 @@ class VidTranscribe(commands.Cog):
             "enabled_platforms": ["loom", "zoom"],
             "transcription_service": "whisper",  # whisper, openai_api, google, azure
             "audio_transcription_enabled": True,
-            "max_audio_duration_minutes": 30,  # Resource limit
+            "max_audio_duration_minutes": 0,  # 0 = no limit, use chunking for long videos
+            "chunk_duration_minutes": 30,  # Process in chunks for long videos
             "save_transcripts": True,
             "transcript_directory": "./transcripts/",
             "audio_quality": "worst",  # worst, best - for resource efficiency
@@ -232,13 +233,18 @@ class VidTranscribe(commands.Cog):
         
         temp_audio_file = None
         try:
-            # Check duration limit
+            # Get video duration for processing strategy
             duration = await self._get_video_duration(url)
             max_duration = await self.config.max_audio_duration_minutes()
+            chunk_duration = await self.config.chunk_duration_minutes()
             
-            if duration and duration > max_duration * 60:
+            # Check if we need chunked processing
+            if duration and max_duration > 0 and duration > max_duration * 60:
                 await ctx.send(f"⚠️ Video too long ({duration//60:.1f} min). Max allowed: {max_duration} min")
                 return None
+            elif duration and duration > chunk_duration * 60:
+                # Use chunked processing for long videos
+                return await self._transcribe_audio_chunked(ctx, url, duration)
             
             await ctx.send("🎵 Downloading audio (audio only, not full video)...")
             
@@ -266,6 +272,104 @@ class VidTranscribe(commands.Cog):
                     os.unlink(temp_audio_file)
                 except:
                     pass
+    
+    async def _transcribe_audio_chunked(self, ctx, url: str, total_duration: float) -> Optional[str]:
+        """Transcribe long videos by processing them in chunks."""
+        try:
+            chunk_duration = await self.config.chunk_duration_minutes() * 60  # Convert to seconds
+            total_chunks = int((total_duration + chunk_duration - 1) // chunk_duration)  # Ceiling division
+            
+            await ctx.send(f"📹 Processing long video ({total_duration//60:.1f} min) in {total_chunks} chunks...")
+            
+            all_transcripts = []
+            temp_files = []
+            
+            try:
+                for chunk_num in range(total_chunks):
+                    start_time = chunk_num * chunk_duration
+                    end_time = min((chunk_num + 1) * chunk_duration, total_duration)
+                    
+                    progress_msg = f"🔄 Processing chunk {chunk_num + 1}/{total_chunks} ({start_time//60:.0f}-{end_time//60:.0f} min)"
+                    await ctx.send(progress_msg)
+                    
+                    # Download audio chunk
+                    chunk_file = await self._download_audio_chunk(url, start_time, end_time - start_time)
+                    if not chunk_file:
+                        await ctx.send(f"⚠️ Failed to download chunk {chunk_num + 1}, skipping...")
+                        continue
+                    
+                    temp_files.append(chunk_file)
+                    
+                    # Transcribe chunk
+                    chunk_transcript = await self._transcribe_audio_file(chunk_file)
+                    if chunk_transcript:
+                        # Add timestamp info
+                        timestamp_header = f"\n\n--- Chunk {chunk_num + 1} ({start_time//60:.0f}:{start_time%60:02.0f} - {end_time//60:.0f}:{end_time%60:02.0f}) ---\n"
+                        all_transcripts.append(timestamp_header + chunk_transcript)
+                    
+                    # Progress update
+                    progress = ((chunk_num + 1) / total_chunks) * 100
+                    await ctx.send(f"✅ Chunk {chunk_num + 1} completed ({progress:.0f}% done)")
+                
+                if all_transcripts:
+                    final_transcript = "\n".join(all_transcripts)
+                    await ctx.send(f"🎉 Transcription completed! Processed {len(all_transcripts)} chunks.")
+                    return final_transcript
+                else:
+                    await ctx.send("❌ No chunks were successfully transcribed.")
+                    return None
+                    
+            finally:
+                # Clean up all temp chunk files
+                if await self.config.cleanup_temp_files():
+                    for temp_file in temp_files:
+                        try:
+                            os.unlink(temp_file)
+                        except:
+                            pass
+                            
+        except Exception as e:
+            log.error(f"Chunked transcription failed: {e}")
+            await ctx.send(f"❌ Chunked transcription failed: {str(e)}")
+            return None
+    
+    async def _download_audio_chunk(self, url: str, start_time: float, duration: float) -> Optional[str]:
+        """Download a specific time segment of audio."""
+        try:
+            temp_dir = tempfile.gettempdir()
+            audio_quality = await self.config.audio_quality()
+            
+            # Generate unique filename for chunk
+            chunk_filename = f"chunk_{int(start_time)}_{int(duration)}.m4a"
+            output_path = os.path.join(temp_dir, chunk_filename)
+            
+            # Configure yt-dlp for chunk download with time range
+            ydl_opts = {
+                'format': f'bestaudio[ext=m4a]/{audio_quality}audio',
+                'outtmpl': output_path,
+                'quiet': True,
+                'no_warnings': True,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'm4a',
+                }],
+                'postprocessor_args': [
+                    '-ss', str(start_time),
+                    '-t', str(duration)
+                ]
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+                
+            if os.path.exists(output_path):
+                return output_path
+            else:
+                return None
+                
+        except Exception as e:
+            log.error(f"Failed to download audio chunk: {e}")
+            return None
     
     async def _get_video_duration(self, url: str) -> Optional[float]:
         """Get video duration without downloading."""
@@ -504,9 +608,17 @@ class VidTranscribe(commands.Cog):
         )
         
         # Resource limits
+        max_duration = config['max_audio_duration_minutes']
+        duration_text = "No limit (chunked processing)" if max_duration == 0 else f"{max_duration} minutes"
         embed.add_field(
             name="Max Duration",
-            value=f"{config['max_audio_duration_minutes']} minutes",
+            value=duration_text,
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Chunk Size",
+            value=f"{config['chunk_duration_minutes']} minutes",
             inline=True
         )
         
